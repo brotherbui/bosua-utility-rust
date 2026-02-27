@@ -1,7 +1,9 @@
 //! Luhn CLI command — Luhn algorithm operations for checksum validation.
 //!
 //! Matches Go's `luhn` command with subcommands: check, generate.
-//! Aliases: c, conf.
+//! Aliases: l, lhn.
+//! Note: Go version uses "c"/"conf" but those conflict with the `config` command in clap
+//! (cobra allows duplicate aliases across siblings, clap does not).
 
 use clap::{ArgMatches, Command};
 
@@ -11,7 +13,7 @@ use crate::errors::{BosuaError, Result};
 /// Build the `luhn` clap command with subcommands.
 pub fn checksum_command() -> Command {
     Command::new("luhn")
-        .aliases(["c", "conf"])
+        .aliases(["l", "lhn"])
         .about("Luhn algorithm operations for checksum validation")
         .subcommand_required(true)
         .arg_required_else_help(true)
