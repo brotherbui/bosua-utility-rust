@@ -1,0 +1,37 @@
+[Unit]
+Description=Bosua CLI Toolkit Daemon
+Documentation=https://github.com/user/bosua
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bosua
+Group=bosua
+
+ExecStart=/usr/local/bin/bosua-linux serve
+Restart=always
+RestartSec=5
+
+# Environment variables
+Environment=TZ=Asia/Bangkok
+Environment=BACKEND_IP=
+Environment=BACKEND_DOMAIN=
+Environment=GCP_IP=
+Environment=GCP_DOMAIN=
+Environment=BOSUA_API_KEY=
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp /var/log
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bosua
+
+[Install]
+WantedBy=multi-user.target

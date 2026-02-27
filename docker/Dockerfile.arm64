@@ -1,0 +1,17 @@
+# Minimal Docker image for bosua-linux (arm64)
+# Binary is pre-built by: make linux-arm64
+# Image is built by: make docker-linux-arm64
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+LABEL maintainer="bosua"
+LABEL architecture="arm64"
+
+ENV TZ=Asia/Bangkok
+
+COPY dist/rust/bosua-linux-arm64 /bosua-linux
+
+EXPOSE 8080
+
+ENTRYPOINT ["/bosua-linux"]
+CMD ["serve"]

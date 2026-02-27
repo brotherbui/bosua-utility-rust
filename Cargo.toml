@@ -1,0 +1,105 @@
+[workspace]
+members = [
+    "crates/bosua-lib",
+    "crates/bosua-macos",
+    "crates/bosua-linux",
+    "crates/bosua-linux-gcp",
+]
+resolver = "2"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# CLI framework
+clap = { version = "4", features = ["derive", "string"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# HTTP server
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"] }
+
+# TLS
+rustls = { version = "0.23", features = ["ring"] }
+tokio-rustls = "0.26"
+
+# PEM file parsing
+rustls-pemfile = "2"
+
+# Crypto
+ring = "0.17"
+md-5 = "0.10"
+webpki-roots = "1.0"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Progress bars
+indicatif = "0.17"
+
+# HTML parsing
+scraper = "0.22"
+
+# OAuth2
+oauth2 = "4"
+
+# AWS (pinned for rustc 1.88 compatibility)
+aws-sdk-ec2 = "=1.208.0"
+aws-config = "=1.6.3"
+
+# TUI
+ratatui = "0.29"
+dialoguer = "0.11"
+crossterm = "0.28"
+
+# Datetime
+chrono = { version = "0.4", features = ["serde"] }
+
+# Property testing
+proptest = "1"
+
+# Cancellation
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# File locking
+fs2 = "0.4"
+
+# Filesystem watching
+notify = "7"
+
+# Markdown
+pulldown-cmark = "0.12"
+
+# Text processing
+unicode-normalization = "0.1"
+
+# Async trait
+async-trait = "0.1"
+
+# Stream utilities
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+
+# Base64 encoding
+base64 = "0.22"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

@@ -1,0 +1,9 @@
+[package]
+name = "bosua-macos"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bosua-lib = { path = "../bosua-lib", features = ["macos"] }
+tokio.workspace = true
+tracing.workspace = true

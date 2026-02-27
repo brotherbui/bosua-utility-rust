@@ -1,0 +1,110 @@
+[package]
+name = "bosua-lib"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+macos = []
+linux = ["http-server"]
+gcp = ["http-server"]
+http-server = [
+    "dep:axum",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:tokio-rustls",
+    "dep:tokio-stream",
+]
+
+[dependencies]
+# Async runtime
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+
+# CLI framework
+clap.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# HTTP server (feature-gated)
+axum = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+
+# HTTP client
+reqwest.workspace = true
+
+# TLS
+rustls.workspace = true
+rustls-pemfile.workspace = true
+
+# Crypto
+ring.workspace = true
+md-5.workspace = true
+webpki-roots.workspace = true
+
+# Database
+rusqlite.workspace = true
+
+# Progress bars
+indicatif.workspace = true
+
+# HTML parsing
+scraper.workspace = true
+
+# OAuth2
+oauth2.workspace = true
+
+# AWS
+aws-sdk-ec2.workspace = true
+aws-config.workspace = true
+
+# TUI
+ratatui.workspace = true
+dialoguer.workspace = true
+crossterm.workspace = true
+
+# Cancellation
+tokio-util.workspace = true
+
+# Stream utilities
+futures-util.workspace = true
+
+# Datetime
+chrono.workspace = true
+
+# File locking
+fs2.workspace = true
+
+# Filesystem watching
+notify.workspace = true
+
+# Markdown
+pulldown-cmark.workspace = true
+
+# Text processing
+unicode-normalization.workspace = true
+
+# Async trait
+async-trait.workspace = true
+
+# Base64 encoding
+base64.workspace = true
+
+# Stream utilities (feature-gated)
+tokio-stream = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile = "3.26.0"
