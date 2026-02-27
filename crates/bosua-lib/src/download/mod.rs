@@ -148,6 +148,75 @@ impl DownloadManager {
         Ok(results)
     }
 
+    /// Download explicit URLs with cancellation support.
+    ///
+    /// Like [`download_with_context`](Self::download_with_context) but takes
+    /// URLs directly instead of reading from the links file.
+    pub async fn download_urls_with_context(
+        &self,
+        token: CancellationToken,
+        urls: &[String],
+        is_cron: bool,
+        skip_size: u64,
+    ) -> Result<Vec<DownloadResult>> {
+        let _lock_guard = self.lock.acquire()?;
+
+        if urls.is_empty() {
+            if !is_cron {
+                output::info("No URLs to download.");
+            }
+            return Ok(Vec::new());
+        }
+
+        let cfg = self.config.get_config().await;
+        let total = urls.len();
+        if !is_cron {
+            output::info(&format!("Starting download of {} URL(s)...", total));
+        }
+
+        let mut results = Vec::new();
+
+        for (idx, url) in urls.iter().enumerate() {
+            if token.is_cancelled() {
+                output::warning("Download cancelled by signal.");
+                break;
+            }
+
+            if !is_cron {
+                output::info(&format!("[{}/{}] {}", idx + 1, total, url));
+            }
+
+            match self
+                .download_single_with_retry(&token, url, skip_size, &cfg)
+                .await
+            {
+                Ok(result) => {
+                    if !is_cron {
+                        output::success(&format!(
+                            "Downloaded: {} ({} bytes)",
+                            result.path.display(),
+                            result.total_bytes
+                        ));
+                    }
+                    results.push(result);
+                }
+                Err(e) => {
+                    output::error(&format!("Failed to download {}: {}", url, e));
+                }
+            }
+        }
+
+        if !is_cron {
+            output::info(&format!(
+                "Completed: {}/{} downloads succeeded.",
+                results.len(),
+                total
+            ));
+        }
+
+        Ok(results)
+    }
+
     /// Read URLs from the input links file, one per line.
     /// Skips empty lines and lines starting with `#`.
     async fn read_links(&self) -> Result<Vec<String>> {

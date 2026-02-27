@@ -9,9 +9,6 @@
 use clap::{ArgMatches, Command};
 
 use crate::cli::{CommandBuilder, CommandCategory, CommandMeta};
-use crate::download::DownloadManager;
-use crate::errors::Result;
-use crate::signal::SignalHandler;
 
 /// Build the `cloud` clap command with all subcommands.
 pub fn cloud_command() -> Command {
@@ -47,32 +44,6 @@ pub fn handle_cloud(matches: &ArgMatches) {
         Some(("sync", _)) => println!("cloud sync: not yet implemented"),
         _ => unreachable!("subcommand_required is set"),
     }
-}
-
-/// Handle the `download` command.
-///
-/// Creates a `CancellationToken`, spawns a signal handler for graceful SIGINT
-/// cancellation, and delegates to `DownloadManager::download_with_context`.
-pub async fn handle_download(
-    _matches: &ArgMatches,
-    dl: &DownloadManager,
-) -> Result<()> {
-    let signal_handler = SignalHandler::new();
-    let token = signal_handler.token();
-
-    // Spawn signal listener in the background so SIGINT cancels the token.
-    tokio::spawn(async move {
-        signal_handler.listen().await;
-    });
-
-    let results = dl.download_with_context(token, false, 0).await?;
-
-    println!(
-        "Download complete: {} file(s) downloaded.",
-        results.len()
-    );
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

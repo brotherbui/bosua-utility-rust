@@ -10,6 +10,7 @@ pub mod cron;
 pub mod crx;
 pub mod daemon;
 pub mod detect;
+pub mod download;
 pub mod fshare;
 pub mod fshare_scan;
 pub mod gcloud;
@@ -134,12 +135,7 @@ pub fn register_macos_commands(registry: &mut CommandRegistry) {
         .register(crx::crx_meta())
         .expect("failed to register crx command");
     registry
-        .register(
-            CommandBuilder::new("download")
-                .category(CommandCategory::Network)
-                .description("Download operations")
-                .build(),
-        )
+        .register(download::download_meta())
         .expect("failed to register download command");
     registry
         .register(fshare::fshare_meta())
@@ -227,12 +223,7 @@ pub fn register_linux_commands(registry: &mut CommandRegistry) {
         .register(daemon::daemon_meta())
         .expect("failed to register daemon command");
     registry
-        .register(
-            CommandBuilder::new("download")
-                .category(CommandCategory::Network)
-                .description("Download operations")
-                .build(),
-        )
+        .register(download::download_meta())
         .expect("failed to register download command");
     registry
         .register(fshare::fshare_meta())
@@ -284,12 +275,7 @@ pub fn register_gcp_commands(registry: &mut CommandRegistry) {
         .register(daemon::daemon_meta())
         .expect("failed to register daemon command");
     registry
-        .register(
-            CommandBuilder::new("download")
-                .category(CommandCategory::Network)
-                .description("Download operations")
-                .build(),
-        )
+        .register(download::download_meta())
         .expect("failed to register download command");
     registry
         .register(fshare::fshare_meta())
@@ -351,7 +337,7 @@ pub async fn dispatch_command(
         "bitcoin" => bitcoin::handle_bitcoin(matches)?,
         "crx" => crx::handle_crx(matches, &services.http_client).await?,
         "download" => {
-            cloud::handle_download(
+            download::handle_download(
                 matches,
                 services.download_manager().await?.as_ref(),
             )
