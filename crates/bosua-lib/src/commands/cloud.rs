@@ -10,7 +10,7 @@ use clap::{ArgMatches, Command};
 
 use crate::cli::{CommandBuilder, CommandCategory, CommandMeta};
 use crate::download::DownloadManager;
-use crate::errors::{BosuaError, Result};
+use crate::errors::Result;
 use crate::signal::SignalHandler;
 
 /// Build the `cloud` clap command with all subcommands.

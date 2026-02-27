@@ -7,7 +7,7 @@ use clap::{Arg, ArgMatches, Command};
 
 use crate::cli::{CommandBuilder, CommandCategory, CommandMeta};
 use crate::daemon::DaemonManager;
-use crate::errors::{BosuaError, Result};
+use crate::errors::Result;
 
 /// Build the `daemon` clap command with all subcommands.
 pub fn daemon_command() -> Command {
