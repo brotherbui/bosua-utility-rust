@@ -340,6 +340,7 @@ pub async fn dispatch_command(
             download::handle_download(
                 matches,
                 services.download_manager().await?.as_ref(),
+                services.fshare().await.ok().map(|f| f.as_ref()),
             )
             .await?
         }
