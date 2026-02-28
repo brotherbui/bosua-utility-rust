@@ -19,6 +19,11 @@ const _FSHARE_API_BASE: &str = "https://api.fshare.vn/api";
 const FSHARE_LOGIN_URL: &str = "https://api.fshare.vn/api/user/login";
 const FSHARE_DOWNLOAD_URL: &str = "https://api.fshare.vn/api/session/download";
 const FSHARE_FOLDER_URL: &str = "https://api.fshare.vn/api/fileops/getFolderList";
+const FSHARE_USER_INFO_URL: &str = "https://api2.fshare.vn/api/user/get";
+const FSHARE_USER_AGENT: &str = "Vietmediaf /Kodi1.1.99-092019";
+
+/// Default FShare API application key (matches Go's `AppKey` constant).
+pub const FSHARE_APP_KEY: &str = "dMnqMMZMUnN5YpvKENaEhdQQ5jxDqddt";
 
 // ---------------------------------------------------------------------------
 // Data models
@@ -130,15 +135,20 @@ impl FShareClient {
     /// Log in to FShare and store the session token.
     pub async fn login(&self) -> Result<FShareLoginResponse> {
         let client = self.http.get_client().await;
-        let req = FShareLoginRequest {
-            email: self.email.clone(),
-            password: self.password.clone(),
-            app_key: self.app_key.clone(),
-        };
+
+        // Build raw JSON payload to match Go's behavior.
+        // Go uses a raw JSON string (not struct serialization) because the FShare API
+        // has quirks with Content-Type handling. We replicate that approach.
+        let payload = format!(
+            r#"{{"app_key":"{}","user_email":"{}","password":"{}"}}"#,
+            self.app_key, self.email, self.password
+        );
 
         let resp = client
             .post(FSHARE_LOGIN_URL)
-            .json(&req)
+            .header("cache-control", "no-cache")
+            .header("User-Agent", "kodivietmediaf-K58W6U")
+            .body(payload)
             .send()
             .await
             .map_err(BosuaError::Http)?;
@@ -177,7 +187,10 @@ impl FShareClient {
     /// Resolve a VIP download link from an FShare URL.
     ///
     /// Returns the direct download URL on success.
+    /// Automatically ensures authentication before resolving.
     pub async fn resolve_vip_link(&self, fshare_url: &str) -> Result<String> {
+        self.ensure_authenticated().await?;
+
         let token = self.token.read().await.clone().ok_or_else(|| {
             BosuaError::Auth("not logged in to FShare — call login() first".into())
         })?;
@@ -312,6 +325,8 @@ impl FShareClient {
         link_code: &str,
         page: Option<u32>,
     ) -> Result<FShareFolderResponse> {
+        self.ensure_authenticated().await?;
+
         let token = self.token.read().await.clone().ok_or_else(|| {
             BosuaError::Auth("not logged in to FShare — call login() first".into())
         })?;
@@ -349,6 +364,153 @@ impl FShareClient {
         resp.json::<FShareFolderResponse>()
             .await
             .map_err(BosuaError::Http)
+    }
+
+    /// Set the session ID directly (e.g. from a saved token file).
+    pub async fn set_session_id(&self, session_id: String) {
+        *self.session_id.write().await = Some(session_id);
+    }
+
+    /// Get the current session ID, or `None` if not set.
+    pub async fn get_session_id(&self) -> Option<String> {
+        self.session_id.read().await.clone()
+    }
+
+    /// Return the default token file path: `~/.config/fshare/fshare_token.txt`.
+    ///
+    /// Matches Go's `config.GetTokenFile()`.
+    pub fn token_file_path() -> std::path::PathBuf {
+        let home = std::env::var("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
+        home.join(".config").join("fshare").join("fshare_token.txt")
+    }
+
+    /// Load token and session_id from the token file.
+    ///
+    /// File format: `token/session_id` (slash-separated, single line).
+    /// Matches Go's `GetToken()` file reading logic.
+    pub async fn load_token_from_file(&self) -> Result<bool> {
+        let path = Self::token_file_path();
+        match tokio::fs::read_to_string(&path).await {
+            Ok(content) => {
+                let content = content.trim();
+                if content.is_empty() {
+                    return Ok(false);
+                }
+                if let Some((token, session_id)) = content.split_once('/') {
+                    if !token.is_empty() && !session_id.is_empty() {
+                        *self.token.write().await = Some(token.to_string());
+                        *self.session_id.write().await = Some(session_id.to_string());
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Save the current token and session_id to the token file.
+    ///
+    /// Matches Go's `Login()` which writes `token/session_id` to the file.
+    pub async fn save_token_to_file(&self) -> Result<()> {
+        let token = self.token.read().await.clone().unwrap_or_default();
+        let session_id = self.session_id.read().await.clone().unwrap_or_default();
+        if token.is_empty() || session_id.is_empty() {
+            return Ok(());
+        }
+        let path = Self::token_file_path();
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(BosuaError::Io)?;
+        }
+        let content = format!("{}/{}", token, session_id);
+        tokio::fs::write(&path, content).await.map_err(BosuaError::Io)?;
+        Ok(())
+    }
+
+    /// Ensure we have a valid token — load from file, or login if needed.
+    ///
+    /// Matches Go's `GetToken()` flow:
+    /// 1. Read token file → if valid, use it
+    /// 2. Otherwise, login with credentials and save token
+    pub async fn ensure_authenticated(&self) -> Result<()> {
+        // Already have a token in memory
+        if self.token.read().await.is_some() {
+            return Ok(());
+        }
+        // Try loading from file
+        if self.load_token_from_file().await? {
+            return Ok(());
+        }
+        // Login with credentials
+        if self.email.is_empty() || self.password.is_empty() {
+            return Err(BosuaError::Auth(
+                "FShare: no token file and no credentials configured".into(),
+            ));
+        }
+        let resp = self.login().await?;
+        if resp.token.is_some() {
+            self.save_token_to_file().await?;
+            Ok(())
+        } else {
+            Err(BosuaError::Auth(
+                resp.msg.unwrap_or_else(|| "FShare login returned no token".into()),
+            ))
+        }
+    }
+
+    /// Fetch user info from FShare API.
+    ///
+    /// Matches Go's `GetUserInfo()` which calls `https://api2.fshare.vn/api/user/get`
+    /// with the session_id cookie.
+    pub async fn get_user_info(&self) -> Result<serde_json::Value> {
+        self.ensure_authenticated().await?;
+
+        let client = self.http.get_client().await;
+        let session_id = self.session_id_or_empty().await;
+
+        let resp = client
+            .get(FSHARE_USER_INFO_URL)
+            .header("User-Agent", FSHARE_USER_AGENT)
+            .header("Cookie", format!("session_id={}", session_id))
+            .send()
+            .await
+            .map_err(BosuaError::Http)?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BosuaError::Cloud {
+                service: "fshare".into(),
+                message: format!("get user info failed ({status}): {body}"),
+            });
+        }
+
+        let info: serde_json::Value = resp.json().await.map_err(BosuaError::Http)?;
+
+        // If code == 201, token expired — re-login and retry (matches Go behavior)
+        if info.get("code").and_then(|c| c.as_f64()) == Some(201.0) {
+            if !self.email.is_empty() && !self.password.is_empty() {
+                let login_resp = self.login().await?;
+                if login_resp.token.is_some() {
+                    self.save_token_to_file().await?;
+                    // Retry
+                    let session_id = self.session_id_or_empty().await;
+                    let resp = client
+                        .get(FSHARE_USER_INFO_URL)
+                        .header("User-Agent", FSHARE_USER_AGENT)
+                        .header("Cookie", format!("session_id={}", session_id))
+                        .send()
+                        .await
+                        .map_err(BosuaError::Http)?;
+                    return resp.json::<serde_json::Value>().await.map_err(BosuaError::Http);
+                }
+            }
+            return Err(BosuaError::Auth("FShare session expired".into()));
+        }
+
+        Ok(info)
     }
 
     /// Helper to get the session ID or an empty string.
@@ -421,20 +583,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_vip_link_requires_auth() {
-        let client = make_test_client();
+        let http = HttpClient::from_defaults().expect("http client");
+        // Client with no credentials — ensure_authenticated should fail
+        let client = FShareClient::new(http, String::new(), String::new(), String::new());
         let result = client.resolve_vip_link("https://www.fshare.vn/file/ABC123").await;
         assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("not logged in"));
     }
 
     #[tokio::test]
     async fn test_scan_folder_requires_auth() {
-        let client = make_test_client();
+        let http = HttpClient::from_defaults().expect("http client");
+        // Client with no credentials — ensure_authenticated should fail
+        let client = FShareClient::new(http, String::new(), String::new(), String::new());
         let result = client.scan_folder("FOLDER123", None).await;
         assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("not logged in"));
     }
 
     #[test]

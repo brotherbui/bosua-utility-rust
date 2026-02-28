@@ -139,15 +139,21 @@ impl ServiceRegistry {
     }
 
     /// Lazily initialize and return the FShare client.
+    ///
+    /// Uses the shared FShare app key and loads any saved token from
+    /// `~/.config/fshare/fshare_token.txt` so the Rust and Go CLIs
+    /// share authentication state.
     pub async fn fshare(&self) -> Result<&Arc<FShareClient>> {
         self.fshare
             .get_or_try_init(|| async {
                 let client = FShareClient::new(
                     self.http_client.clone(),
-                    String::new(), // email
+                    String::new(), // email — auto-login uses obfuscated creds in Go; empty here
                     String::new(), // password
-                    String::new(), // app_key
+                    crate::cloud::fshare::FSHARE_APP_KEY.to_string(),
                 );
+                // Load saved token from file (shared with Go binary)
+                let _ = client.load_token_from_file().await;
                 Ok(Arc::new(client))
             })
             .await

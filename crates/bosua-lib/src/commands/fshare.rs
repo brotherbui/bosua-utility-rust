@@ -179,13 +179,12 @@ fn shorten_subcommand() -> Command {
 async fn handle_account(matches: &ArgMatches, fshare: &FShareClient) -> Result<()> {
     match matches.subcommand() {
         Some(("info", _)) => {
-            match fshare.get_token().await {
-                Some(token) => {
-                    output::success("FShare: logged in");
-                    output::info(&format!("Token: {}", mask_token(&token)));
+            match fshare.get_user_info().await {
+                Ok(info) => {
+                    print_user_info(&info, true);
                 }
-                None => {
-                    output::info("FShare: not logged in");
+                Err(e) => {
+                    output::info(&format!("FShare: {}", e));
                 }
             }
             Ok(())
@@ -234,12 +233,85 @@ async fn handle_account(matches: &ArgMatches, fshare: &FShareClient) -> Result<(
     }
 }
 
+/// Print user info matching Go's `PrintUserInfo(info, true)`.
+///
+/// When `short` is true, only prints: account_type, email, expire_vip, joindate
+/// Date fields (joindate, expire_vip) are converted from Unix timestamps.
+fn print_user_info(info: &serde_json::Value, short: bool) {
+    let filters = ["account_type", "email", "expire_vip", "joindate"];
+    let date_fields = ["joindate", "expire_vip"];
+
+    if let Some(obj) = info.as_object() {
+        // Build a mutable copy for date conversion
+        let mut display: serde_json::Map<String, serde_json::Value> = obj.clone();
+
+        // Convert Unix timestamp date fields to YYYY-MM-DD
+        for field in &date_fields {
+            if let Some(val) = display.get(*field) {
+                let ts_str = match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => continue,
+                };
+                if let Ok(ts) = ts_str.parse::<i64>() {
+                    if ts > 0 {
+                        let days = ts as u64 / 86400;
+                        let (y, m, d) = days_to_ymd(days);
+                        display.insert(
+                            field.to_string(),
+                            serde_json::Value::String(format!("{:04}-{:02}-{:02}", y, m, d)),
+                        );
+                    }
+                }
+            }
+        }
+
+        if short {
+            for key in &filters {
+                if let Some(val) = display.get(*key) {
+                    let val_str = match val {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    println!("{}: {}", key, val_str);
+                }
+            }
+        } else {
+            for (key, val) in &display {
+                let val_str = match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                println!("{}: {}", key, val_str);
+            }
+        }
+    }
+}
+
+/// Convert days since Unix epoch to (year, month, day).
+fn days_to_ymd(days: u64) -> (u64, u64, u64) {
+    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
 async fn handle_token(matches: &ArgMatches, fshare: &FShareClient) -> Result<()> {
     match matches.subcommand() {
         Some(("view", _)) => {
             match fshare.get_token().await {
                 Some(token) => {
+                    let session_id = fshare.get_session_id().await.unwrap_or_default();
                     output::info(&format!("Token: {}", mask_token(&token)));
+                    output::info(&format!("Session ID: {}", mask_token(&session_id)));
                 }
                 None => {
                     output::info("No token set.");
@@ -248,18 +320,21 @@ async fn handle_token(matches: &ArgMatches, fshare: &FShareClient) -> Result<()>
             Ok(())
         }
         Some(("reset", _)) => {
+            // Delete the token file (matches Go's ResetToken)
+            let path = FShareClient::token_file_path();
+            let _ = tokio::fs::remove_file(&path).await;
             fshare.set_token(String::new()).await;
             output::success("Token reset");
             Ok(())
         }
         // `token` with no subcommand shows user info (matches Go behavior)
         _ => {
-            match fshare.get_token().await {
-                Some(token) => {
-                    output::info(&format!("Token: {}", mask_token(&token)));
+            match fshare.get_user_info().await {
+                Ok(info) => {
+                    print_user_info(&info, true);
                 }
-                None => {
-                    output::info("No token set.");
+                Err(e) => {
+                    output::info(&format!("FShare: {}", e));
                 }
             }
             Ok(())
