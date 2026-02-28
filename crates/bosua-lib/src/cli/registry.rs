@@ -270,11 +270,15 @@ impl CommandBuilder {
             .get_about()
             .map(|s| s.to_string())
             .unwrap_or_default();
+        let aliases: Vec<String> = cmd
+            .get_all_aliases()
+            .map(|s| s.to_string())
+            .collect();
         Self {
             name,
             category: None,
             description,
-            aliases: Vec::new(),
+            aliases,
             hidden: false,
             deprecated: false,
             command: Some(cmd),

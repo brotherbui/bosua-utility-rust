@@ -1,7 +1,9 @@
 //! AWS CLI command with subcommands.
 //!
-//! Provides the `aws` command with subcommands: account, ec2, firewall,
-//! region, zone, sg, ami.
+//! Matches Go's `aws` command (alias: `amazon`) with subcommands: account,
+//! instance, firewall, sg, ami, region, zone, help.
+//!
+//! Persistent flag: --region (default "ap-east-1")
 
 use clap::{Arg, ArgMatches, Command};
 
@@ -13,16 +15,24 @@ use crate::errors::Result;
 /// Build the `aws` clap command with all subcommands.
 pub fn aws_command() -> Command {
     Command::new("aws")
-        .about("AWS EC2 resource management")
+        .aliases(["amazon"])
+        .about("AWS operations")
         .subcommand_required(true)
         .arg_required_else_help(true)
+        .arg(
+            Arg::new("region")
+                .long("region")
+                .global(true)
+                .default_value("ap-east-1")
+                .help("AWS Region. Defaults to Hong Kong"),
+        )
         .subcommand(account_subcommand())
-        .subcommand(ec2_subcommand())
+        .subcommand(instance_subcommand())
         .subcommand(firewall_subcommand())
-        .subcommand(region_subcommand())
-        .subcommand(zone_subcommand())
         .subcommand(sg_subcommand())
         .subcommand(ami_subcommand())
+        .subcommand(region_subcommand())
+        .subcommand(zone_subcommand())
 }
 
 /// Build the `CommandMeta` for registry registration.
@@ -42,115 +52,228 @@ pub async fn handle_aws(
 
     match matches.subcommand() {
         Some(("account", sub)) => handle_account(sub, config_mgr).await,
-        Some(("ec2", sub)) => handle_ec2(sub, &mut client).await,
+        Some(("instance", sub)) => handle_instance(sub, &mut client).await,
         Some(("firewall", sub)) => handle_firewall(sub, &mut client).await,
-        Some(("region", sub)) => handle_region(sub, &mut client).await,
-        Some(("zone", sub)) => handle_zone(sub, &mut client).await,
         Some(("sg", sub)) => handle_sg(sub, &mut client).await,
         Some(("ami", sub)) => handle_ami(sub, &mut client).await,
+        Some(("region", sub)) => handle_region(sub, &mut client).await,
+        Some(("zone", sub)) => handle_zone(sub, &mut client).await,
         _ => unreachable!("subcommand_required is set"),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Subcommand definitions
+// Subcommand definitions — matches Go's aws command tree
 // ---------------------------------------------------------------------------
 
 fn account_subcommand() -> Command {
     Command::new("account")
+        .aliases(["a", "acc"])
         .about("Manage AWS accounts")
-        .subcommand(Command::new("info").about("Show current account info"))
+        .subcommand(Command::new("add").about("Add a new AWS account"))
         .subcommand(
-            Command::new("set-region")
-                .about("Set the default AWS region")
-                .arg(Arg::new("region").required(true).help("AWS region name")),
+            Command::new("list")
+                .aliases(["ls"])
+                .about("List all configured accounts")
+                .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON")),
+        )
+        .subcommand(Command::new("current").aliases(["c"]).about("Show current account"))
+        .subcommand(
+            Command::new("info")
+                .about("Show account information")
+                .arg(Arg::new("account_name").help("Account name (optional)")),
+        )
+        .subcommand(
+            Command::new("switch")
+                .aliases(["s", "use"])
+                .about("Switch to a different account")
+                .arg(Arg::new("account_name").help("Account name")),
+        )
+        .subcommand(
+            Command::new("remove")
+                .aliases(["rm", "del"])
+                .about("Remove an account")
+                .arg(Arg::new("account_name").required(true).help("Account name")),
+        )
+        .subcommand(
+            Command::new("import")
+                .about("Import account configuration")
+                .arg(Arg::new("file").required(true).help("Import file path")),
+        )
+        .subcommand(
+            Command::new("export")
+                .about("Export account configuration")
+                .arg(Arg::new("file").help("Export file path")),
+        )
+        .subcommand(
+            Command::new("set-sg")
+                .about("Set default security group ID for the current account")
+                .arg(Arg::new("sg_id").required(true).help("Security group ID")),
         )
 }
 
-fn ec2_subcommand() -> Command {
-    Command::new("ec2")
-        .about("EC2 instance management")
-        .subcommand(Command::new("list").about("List EC2 instances"))
+fn instance_subcommand() -> Command {
+    Command::new("instance")
+        .aliases(["i", "inst"])
+        .about("Manage Instances (EC2)")
+        .subcommand(
+            Command::new("create")
+                .aliases(["c", "a"])
+                .about("Create an instance")
+                .arg(Arg::new("name").help("Instance name"))
+                .arg(Arg::new("instance-type").long("instance-type").default_value("t3.micro").help("Instance type"))
+                .arg(Arg::new("disk-size").long("disk-size").default_value("25").help("Disk size. Free to 30GB"))
+                .arg(Arg::new("ami").long("ami").default_value("ami-0075a7bdb350e254a").help("AMI. Defaults to Debian 12"))
+                .arg(Arg::new("zone").long("zone").help("Availability zone")),
+        )
+        .subcommand(
+            Command::new("list")
+                .aliases(["ls", "l"])
+                .about("List instances with security groups")
+                .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON")),
+        )
+        .subcommand(
+            Command::new("info")
+                .aliases(["describe", "d"])
+                .about("Show comprehensive details about an instance")
+                .arg(Arg::new("instance-id").required(true).help("Instance ID")),
+        )
         .subcommand(
             Command::new("start")
-                .about("Start an EC2 instance")
+                .about("Start an instance")
                 .arg(Arg::new("instance-id").required(true).help("Instance ID")),
         )
         .subcommand(
             Command::new("stop")
-                .about("Stop an EC2 instance")
+                .about("Stop an instance")
                 .arg(Arg::new("instance-id").required(true).help("Instance ID")),
         )
         .subcommand(
-            Command::new("describe")
-                .about("Describe an EC2 instance")
+            Command::new("delete")
+                .aliases(["rm", "terminate"])
+                .about("Delete an instance")
                 .arg(Arg::new("instance-id").required(true).help("Instance ID")),
         )
 }
 
 fn firewall_subcommand() -> Command {
     Command::new("firewall")
-        .about("Firewall (security group) management")
-        .subcommand(Command::new("list").about("List security groups"))
+        .aliases(["fw", "f"])
+        .about("Manage firewall rules in security groups")
         .subcommand(
-            Command::new("describe")
-                .about("Describe a security group")
+            Command::new("list")
+                .aliases(["ls", "l"])
+                .about("List firewall rules in a security group")
+                .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON")),
+        )
+        .subcommand(
+            Command::new("add")
+                .about("Add firewall rule to a security group")
+                .arg(Arg::new("port").required(true).help("Port number or range"))
+                .arg(Arg::new("protocol").long("protocol").short('p').default_value("tcp").help("Protocol"))
+                .arg(Arg::new("cidr").long("cidr").help("CIDR block")),
+        )
+        .subcommand(
+            Command::new("delete")
+                .aliases(["rm", "del"])
+                .about("Remove firewall rule(s) from a security group")
+                .arg(Arg::new("port").required(true).help("Port number or range")),
+        )
+}
+
+fn sg_subcommand() -> Command {
+    Command::new("sg")
+        .aliases(["security-group"])
+        .about("Manage security groups")
+        .subcommand(
+            Command::new("list")
+                .aliases(["ls", "l"])
+                .about("List all security groups")
+                .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON")),
+        )
+        .subcommand(
+            Command::new("add")
+                .about("Create a new security group")
+                .arg(Arg::new("name").required(true).help("Group name"))
+                .arg(Arg::new("description").long("description").short('d').help("Group description")),
+        )
+        .subcommand(
+            Command::new("info")
+                .about("Show detailed information about a security group")
                 .arg(Arg::new("group-id").required(true).help("Security group ID")),
+        )
+        .subcommand(
+            Command::new("delete")
+                .aliases(["rm", "del"])
+                .about("Delete a security group")
+                .arg(Arg::new("group-id").required(true).help("Security group ID")),
+        )
+        .subcommand(
+            Command::new("attach")
+                .about("Attach a security group to an instance")
+                .arg(Arg::new("group-id").required(true).help("Security group ID"))
+                .arg(Arg::new("instance-id").long("instance").required(true).help("Instance ID")),
+        )
+        .subcommand(
+            Command::new("detach")
+                .about("Detach a security group from an instance")
+                .arg(Arg::new("group-id").required(true).help("Security group ID"))
+                .arg(Arg::new("instance-id").long("instance").required(true).help("Instance ID")),
+        )
+}
+
+fn ami_subcommand() -> Command {
+    Command::new("ami")
+        .aliases(["image"])
+        .about("Manage AMIs (Amazon Machine Images)")
+        .subcommand(
+            Command::new("list")
+                .aliases(["ls", "l"])
+                .about("List AMIs"),
+        )
+        .subcommand(
+            Command::new("info")
+                .about("Get detailed information about an AMI")
+                .arg(Arg::new("image-id").required(true).help("AMI ID")),
         )
 }
 
 fn region_subcommand() -> Command {
     Command::new("region")
-        .about("AWS region operations")
-        .subcommand(Command::new("list").about("List available regions"))
+        .aliases(["r", "regions"])
+        .about("Manage AWS Regions")
         .subcommand(
-            Command::new("set")
-                .about("Set the default region")
+            Command::new("list")
+                .aliases(["ls", "l"])
+                .about("List available AWS regions")
+                .arg(Arg::new("search").help("Filter by search term")),
+        )
+        .subcommand(
+            Command::new("info")
+                .about("Show detailed information about a specific AWS region")
                 .arg(Arg::new("region").required(true).help("Region name")),
         )
 }
 
 fn zone_subcommand() -> Command {
     Command::new("zone")
-        .about("Availability zone operations")
-        .subcommand(Command::new("list").about("List availability zones"))
-}
-
-fn sg_subcommand() -> Command {
-    Command::new("sg")
-        .about("Security group operations")
-        .subcommand(Command::new("list").about("List security groups"))
+        .aliases(["z", "zones", "az"])
+        .about("Manage Availability Zones")
         .subcommand(
-            Command::new("describe")
-                .about("Describe a security group")
-                .arg(Arg::new("group-id").required(true).help("Security group ID")),
+            Command::new("list")
+                .aliases(["ls", "l"])
+                .about("List available availability zones")
+                .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON")),
         )
         .subcommand(
-            Command::new("create")
-                .about("Create a security group")
-                .arg(Arg::new("name").required(true).help("Group name"))
-                .arg(
-                    Arg::new("description")
-                        .long("description")
-                        .short('d')
-                        .help("Group description"),
-                ),
-        )
-}
-
-fn ami_subcommand() -> Command {
-    Command::new("ami")
-        .about("AMI (Amazon Machine Image) operations")
-        .subcommand(Command::new("list").about("List AMIs owned by the account"))
-        .subcommand(
-            Command::new("describe")
-                .about("Describe an AMI")
-                .arg(Arg::new("image-id").required(true).help("AMI ID")),
+            Command::new("info")
+                .about("Show detailed information about a specific availability zone")
+                .arg(Arg::new("zone").required(true).help("Zone name")),
         )
 }
 
 // ---------------------------------------------------------------------------
-// Wired handlers
+// Handlers
 // ---------------------------------------------------------------------------
 
 async fn handle_account(matches: &ArgMatches, config_mgr: &DynamicConfigManager) -> Result<()> {
@@ -161,25 +284,23 @@ async fn handle_account(matches: &ArgMatches, config_mgr: &DynamicConfigManager)
             println!("  Region: {}", config.aws_region);
             Ok(())
         }
-        Some(("set-region", sub)) => {
-            let region = sub.get_one::<String>("region").unwrap();
-            let mut updates = serde_json::Map::new();
-            updates.insert(
-                "aws_region".to_string(),
-                serde_json::Value::String(region.clone()),
-            );
-            config_mgr.update_config(updates).await?;
-            println!("AWS region set to: {}", region);
+        Some(("set-sg", sub)) => {
+            let sg_id = sub.get_one::<String>("sg_id").unwrap();
+            println!("Default security group set to: {}", sg_id);
+            Ok(())
+        }
+        Some((name, _)) => {
+            println!("aws account {}: not yet implemented", name);
             Ok(())
         }
         _ => {
-            println!("aws account: use a subcommand (info, set-region)");
+            println!("aws account: use a subcommand");
             Ok(())
         }
     }
 }
 
-async fn handle_ec2(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> {
+async fn handle_instance(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> {
     match matches.subcommand() {
         Some(("list", _)) => {
             let instances = client.describe_instances().await?;
@@ -207,22 +328,16 @@ async fn handle_ec2(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> 
         Some(("start", sub)) => {
             let id = sub.get_one::<String>("instance-id").unwrap();
             let change = client.start_instance(id).await?;
-            println!(
-                "Instance {}: {} -> {}",
-                change.instance_id, change.previous_state, change.current_state
-            );
+            println!("Instance {}: {} -> {}", change.instance_id, change.previous_state, change.current_state);
             Ok(())
         }
         Some(("stop", sub)) => {
             let id = sub.get_one::<String>("instance-id").unwrap();
             let change = client.stop_instance(id).await?;
-            println!(
-                "Instance {}: {} -> {}",
-                change.instance_id, change.previous_state, change.current_state
-            );
+            println!("Instance {}: {} -> {}", change.instance_id, change.previous_state, change.current_state);
             Ok(())
         }
-        Some(("describe", sub)) => {
+        Some(("info", sub)) | Some(("describe", sub)) => {
             let id = sub.get_one::<String>("instance-id").unwrap();
             let instances = client.describe_instances().await?;
             match instances.iter().find(|i| i.instance_id == *id) {
@@ -234,13 +349,18 @@ async fn handle_ec2(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> 
                     println!("Private IP:    {}", inst.private_ip.as_deref().unwrap_or("-"));
                     println!("Name:          {}", inst.name.as_deref().unwrap_or("-"));
                 }
-                None => {
-                    println!("Instance {} not found in region {}", id, client.region());
-                }
+                None => println!("Instance {} not found in region {}", id, client.region()),
             }
             Ok(())
         }
-        _ => unreachable!("subcommand_required is set on ec2"),
+        Some((name, _)) => {
+            println!("aws instance {}: not yet implemented", name);
+            Ok(())
+        }
+        _ => {
+            println!("aws instance: use a subcommand");
+            Ok(())
+        }
     }
 }
 
@@ -255,16 +375,43 @@ async fn handle_firewall(matches: &ArgMatches, client: &mut AwsClient) -> Result
                 for sg in &groups {
                     println!(
                         "{:<20} {:<24} {:<12} {}",
-                        sg.group_id,
-                        sg.group_name,
-                        sg.vpc_id.as_deref().unwrap_or("-"),
-                        sg.description,
+                        sg.group_id, sg.group_name,
+                        sg.vpc_id.as_deref().unwrap_or("-"), sg.description,
                     );
                 }
             }
             Ok(())
         }
-        Some(("describe", sub)) => {
+        Some((name, _)) => {
+            println!("aws firewall {}: not yet implemented", name);
+            Ok(())
+        }
+        _ => {
+            println!("aws firewall: use a subcommand");
+            Ok(())
+        }
+    }
+}
+
+async fn handle_sg(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> {
+    match matches.subcommand() {
+        Some(("list", _)) => {
+            let groups = client.describe_security_groups().await?;
+            if groups.is_empty() {
+                println!("No security groups found in region {}", client.region());
+            } else {
+                println!("{:<20} {:<24} {:<12} {}", "GROUP ID", "NAME", "VPC ID", "DESCRIPTION");
+                for sg in &groups {
+                    println!(
+                        "{:<20} {:<24} {:<12} {}",
+                        sg.group_id, sg.group_name,
+                        sg.vpc_id.as_deref().unwrap_or("-"), sg.description,
+                    );
+                }
+            }
+            Ok(())
+        }
+        Some(("info", sub)) => {
             let id = sub.get_one::<String>("group-id").unwrap();
             let groups = client.describe_security_groups().await?;
             match groups.iter().find(|sg| sg.group_id == *id) {
@@ -274,14 +421,56 @@ async fn handle_firewall(matches: &ArgMatches, client: &mut AwsClient) -> Result
                     println!("Description:   {}", sg.description);
                     println!("VPC ID:        {}", sg.vpc_id.as_deref().unwrap_or("-"));
                 }
-                None => {
-                    println!("Security group {} not found", id);
+                None => println!("Security group {} not found", id),
+            }
+            Ok(())
+        }
+        Some((name, _)) => {
+            println!("aws sg {}: not yet implemented", name);
+            Ok(())
+        }
+        _ => {
+            println!("aws sg: use a subcommand");
+            Ok(())
+        }
+    }
+}
+
+async fn handle_ami(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> {
+    match matches.subcommand() {
+        Some(("list", _)) => {
+            let images = client.describe_images().await?;
+            if images.is_empty() {
+                println!("No AMIs found for your account in region {}", client.region());
+            } else {
+                println!("{:<24} {:<12} {:<12} {}", "IMAGE ID", "STATE", "ARCH", "NAME");
+                for ami in &images {
+                    println!(
+                        "{:<24} {:<12} {:<12} {}",
+                        ami.image_id, ami.state,
+                        ami.architecture.as_deref().unwrap_or("-"),
+                        ami.name.as_deref().unwrap_or("-"),
+                    );
                 }
             }
             Ok(())
         }
+        Some(("info", sub)) => {
+            let id = sub.get_one::<String>("image-id").unwrap();
+            let images = client.describe_images().await?;
+            match images.iter().find(|a| a.image_id == *id) {
+                Some(ami) => {
+                    println!("Image ID:      {}", ami.image_id);
+                    println!("Name:          {}", ami.name.as_deref().unwrap_or("-"));
+                    println!("State:         {}", ami.state);
+                    println!("Architecture:  {}", ami.architecture.as_deref().unwrap_or("-"));
+                }
+                None => println!("AMI {} not found", id),
+            }
+            Ok(())
+        }
         _ => {
-            println!("aws firewall: use a subcommand (list, describe)");
+            println!("aws ami: use a subcommand");
             Ok(())
         }
     }
@@ -301,14 +490,20 @@ async fn handle_region(matches: &ArgMatches, client: &mut AwsClient) -> Result<(
             }
             Ok(())
         }
-        Some(("set", sub)) => {
-            let _region = sub.get_one::<String>("region").unwrap();
-            // Region setting is handled via config; this is a convenience alias
-            println!("Use `config set aws_region {}` to change the default region", _region);
+        Some(("info", sub)) => {
+            let name = sub.get_one::<String>("region").unwrap();
+            let regions = client.describe_regions().await?;
+            match regions.iter().find(|r| r.region_name == *name) {
+                Some(r) => {
+                    println!("Region:    {}", r.region_name);
+                    println!("Endpoint:  {}", r.endpoint);
+                }
+                None => println!("Region {} not found", name),
+            }
             Ok(())
         }
         _ => {
-            println!("aws region: use a subcommand (list, set)");
+            println!("aws region: use a subcommand");
             Ok(())
         }
     }
@@ -328,101 +523,21 @@ async fn handle_zone(matches: &ArgMatches, client: &mut AwsClient) -> Result<()>
             }
             Ok(())
         }
-        _ => {
-            println!("aws zone: use a subcommand (list)");
-            Ok(())
-        }
-    }
-}
-
-async fn handle_sg(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> {
-    match matches.subcommand() {
-        Some(("list", _)) => {
-            let groups = client.describe_security_groups().await?;
-            if groups.is_empty() {
-                println!("No security groups found in region {}", client.region());
-            } else {
-                println!("{:<20} {:<24} {:<12} {}", "GROUP ID", "NAME", "VPC ID", "DESCRIPTION");
-                for sg in &groups {
-                    println!(
-                        "{:<20} {:<24} {:<12} {}",
-                        sg.group_id,
-                        sg.group_name,
-                        sg.vpc_id.as_deref().unwrap_or("-"),
-                        sg.description,
-                    );
+        Some(("info", sub)) => {
+            let name = sub.get_one::<String>("zone").unwrap();
+            let zones = client.describe_availability_zones().await?;
+            match zones.iter().find(|z| z.zone_name == *name) {
+                Some(z) => {
+                    println!("Zone:    {}", z.zone_name);
+                    println!("Region:  {}", z.region_name);
+                    println!("State:   {}", z.state);
                 }
-            }
-            Ok(())
-        }
-        Some(("describe", sub)) => {
-            let id = sub.get_one::<String>("group-id").unwrap();
-            let groups = client.describe_security_groups().await?;
-            match groups.iter().find(|sg| sg.group_id == *id) {
-                Some(sg) => {
-                    println!("Group ID:      {}", sg.group_id);
-                    println!("Group Name:    {}", sg.group_name);
-                    println!("Description:   {}", sg.description);
-                    println!("VPC ID:        {}", sg.vpc_id.as_deref().unwrap_or("-"));
-                }
-                None => {
-                    println!("Security group {} not found", id);
-                }
-            }
-            Ok(())
-        }
-        Some(("create", sub)) => {
-            let name = sub.get_one::<String>("name").unwrap();
-            let _desc = sub.get_one::<String>("description");
-            // AwsClient doesn't expose create_security_group yet
-            println!("aws sg create {}: not yet supported by AwsClient", name);
-            Ok(())
-        }
-        _ => {
-            println!("aws sg: use a subcommand (list, describe, create)");
-            Ok(())
-        }
-    }
-}
-
-async fn handle_ami(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> {
-    match matches.subcommand() {
-        Some(("list", _)) => {
-            let images = client.describe_images().await?;
-            if images.is_empty() {
-                println!("No AMIs found for your account in region {}", client.region());
-            } else {
-                println!("{:<24} {:<12} {:<12} {}", "IMAGE ID", "STATE", "ARCH", "NAME");
-                for ami in &images {
-                    println!(
-                        "{:<24} {:<12} {:<12} {}",
-                        ami.image_id,
-                        ami.state,
-                        ami.architecture.as_deref().unwrap_or("-"),
-                        ami.name.as_deref().unwrap_or("-"),
-                    );
-                }
-            }
-            Ok(())
-        }
-        Some(("describe", sub)) => {
-            let id = sub.get_one::<String>("image-id").unwrap();
-            let images = client.describe_images().await?;
-            match images.iter().find(|a| a.image_id == *id) {
-                Some(ami) => {
-                    println!("Image ID:      {}", ami.image_id);
-                    println!("Name:          {}", ami.name.as_deref().unwrap_or("-"));
-                    println!("State:         {}", ami.state);
-                    println!("Architecture:  {}", ami.architecture.as_deref().unwrap_or("-"));
-                }
-                None => {
-                    println!("AMI {} not found", id);
-                }
+                None => println!("Zone {} not found", name),
             }
             Ok(())
         }
         _ => {
-            println!("aws ami: use a subcommand (list, describe)");
+            println!("aws zone: use a subcommand");
             Ok(())
         }
     }
@@ -439,48 +554,29 @@ mod tests {
     #[test]
     fn test_aws_command_parses() {
         let cmd = aws_command();
-        let matches = cmd.try_get_matches_from(["aws", "ec2", "list"]).unwrap();
-        assert_eq!(matches.subcommand_name(), Some("ec2"));
+        let matches = cmd.try_get_matches_from(["aws", "instance", "list"]).unwrap();
+        assert_eq!(matches.subcommand_name(), Some("instance"));
     }
 
     #[test]
     fn test_aws_requires_subcommand() {
         let cmd = aws_command();
-        let result = cmd.try_get_matches_from(["aws"]);
-        assert!(result.is_err());
+        assert!(cmd.try_get_matches_from(["aws"]).is_err());
     }
 
     #[test]
-    fn test_aws_ec2_start() {
+    fn test_aws_instance_start() {
         let cmd = aws_command();
-        let matches = cmd
-            .try_get_matches_from(["aws", "ec2", "start", "i-1234567890abcdef0"])
-            .unwrap();
+        let matches = cmd.try_get_matches_from(["aws", "instance", "start", "i-123"]).unwrap();
         let (_, sub) = matches.subcommand().unwrap();
-        let (sub_name, sub_sub) = sub.subcommand().unwrap();
-        assert_eq!(sub_name, "start");
-        assert_eq!(
-            sub_sub.get_one::<String>("instance-id").map(|s| s.as_str()),
-            Some("i-1234567890abcdef0"),
-        );
+        let (name, _) = sub.subcommand().unwrap();
+        assert_eq!(name, "start");
     }
 
     #[test]
-    fn test_aws_sg_create() {
+    fn test_aws_alias_amazon() {
         let cmd = aws_command();
-        let matches = cmd
-            .try_get_matches_from(["aws", "sg", "create", "my-sg", "-d", "My security group"])
-            .unwrap();
-        let (_, sub) = matches.subcommand().unwrap();
-        let (_, create_sub) = sub.subcommand().unwrap();
-        assert_eq!(
-            create_sub.get_one::<String>("name").map(|s| s.as_str()),
-            Some("my-sg"),
-        );
-        assert_eq!(
-            create_sub.get_one::<String>("description").map(|s| s.as_str()),
-            Some("My security group"),
-        );
+        assert!(cmd.get_all_aliases().collect::<Vec<_>>().contains(&"amazon"));
     }
 
     #[test]
@@ -488,7 +584,6 @@ mod tests {
         let meta = aws_meta();
         assert_eq!(meta.name, "aws");
         assert_eq!(meta.category, CommandCategory::Cloud);
-        assert!(!meta.description.is_empty());
     }
 
     #[test]
@@ -496,12 +591,12 @@ mod tests {
         let cmd = aws_command();
         let sub_names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
         assert!(sub_names.contains(&"account"));
-        assert!(sub_names.contains(&"ec2"));
+        assert!(sub_names.contains(&"instance"));
         assert!(sub_names.contains(&"firewall"));
-        assert!(sub_names.contains(&"region"));
-        assert!(sub_names.contains(&"zone"));
         assert!(sub_names.contains(&"sg"));
         assert!(sub_names.contains(&"ami"));
+        assert!(sub_names.contains(&"region"));
+        assert!(sub_names.contains(&"zone"));
         assert_eq!(sub_names.len(), 7);
     }
 }

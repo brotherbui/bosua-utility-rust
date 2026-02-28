@@ -1,7 +1,8 @@
 //! Google Drive CLI command with subcommands.
 //!
-//! Provides the `gdrive` command with subcommands: account, browse, file,
-//! drive, permission, play, proxy, oauth2.
+//! Provides the `gdrive` command (alias: `gd`) with FLAT subcommands matching Go:
+//! account, browse, info, list, search, upload, download, delete, mkdir, rename,
+//! move, copy, import, export, generate-playlist, drives, permissions, play, proxy, oauth2.
 
 use std::path::Path;
 
@@ -15,17 +16,44 @@ use crate::output;
 /// Build the `gdrive` clap command with all subcommands.
 pub fn gdrive_command() -> Command {
     Command::new("gdrive")
-        .about("Google Drive management")
+        .aliases(["gd"])
+        .about("Google Drive CLI - comprehensive file management")
+        .long_about("Manage your Google Drive files, folders, accounts, and permissions directly from the command line with optimized performance and advanced features.")
         .subcommand_required(true)
         .arg_required_else_help(true)
+        .arg(
+            Arg::new("account")
+                .long("account")
+                .global(true)
+                .help("Use a specific Google Drive account instead of the current one"),
+        )
+        // Account management
         .subcommand(account_subcommand())
+        // OAuth2
+        .subcommand(oauth2_subcommand())
+        // File operations (flat, matching Go)
+        .subcommand(info_subcommand())
+        .subcommand(list_subcommand())
+        .subcommand(search_subcommand())
+        .subcommand(upload_subcommand())
+        .subcommand(download_subcommand())
+        .subcommand(delete_subcommand())
+        .subcommand(mkdir_subcommand())
+        .subcommand(rename_subcommand())
+        .subcommand(move_subcommand())
+        .subcommand(copy_subcommand())
+        .subcommand(import_subcommand())
+        .subcommand(export_subcommand())
+        .subcommand(generate_playlist_subcommand())
+        // Drive management
+        .subcommand(drives_subcommand())
+        // Browse
         .subcommand(browse_subcommand())
-        .subcommand(file_subcommand())
-        .subcommand(drive_subcommand())
-        .subcommand(permission_subcommand())
+        // Permissions
+        .subcommand(permissions_subcommand())
+        // Play & Proxy
         .subcommand(play_subcommand())
         .subcommand(proxy_subcommand())
-        .subcommand(oauth2_subcommand())
 }
 
 /// Build the `CommandMeta` for registry registration.
@@ -39,17 +67,28 @@ pub fn gdrive_meta() -> CommandMeta {
 pub async fn handle_gdrive(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
     match matches.subcommand() {
         Some(("account", sub)) => handle_account(sub, gdrive).await,
+        Some(("oauth2", sub)) => handle_oauth2(sub, gdrive).await,
+        Some(("info", sub)) => handle_info(sub, gdrive).await,
+        Some(("list", sub)) => handle_list(sub, gdrive).await,
+        Some(("search", sub)) => handle_search(sub, gdrive).await,
+        Some(("upload", sub)) => handle_upload(sub, gdrive).await,
+        Some(("download", sub)) => handle_download(sub, gdrive).await,
+        Some(("delete", sub)) => handle_delete(sub, gdrive).await,
+        Some(("mkdir", sub)) => handle_mkdir(sub, gdrive).await,
+        Some(("rename", sub)) => handle_rename(sub, gdrive).await,
+        Some(("move", sub)) => handle_move(sub, gdrive).await,
+        Some(("copy", sub)) => handle_copy(sub, gdrive).await,
+        Some(("import", sub)) => handle_import(sub, gdrive).await,
+        Some(("export", sub)) => handle_export(sub, gdrive).await,
+        Some(("generate-playlist", sub)) => handle_generate_playlist(sub, gdrive).await,
+        Some(("drives", sub)) => handle_drives(sub),
         Some(("browse", sub)) => handle_browse(sub, gdrive).await,
-        Some(("file", sub)) => handle_file(sub, gdrive).await,
-        Some(("drive", sub)) => handle_drive(sub),
-        Some(("permission", sub)) => handle_permission(sub, gdrive).await,
+        Some(("permissions", sub)) => handle_permissions(sub, gdrive).await,
         Some(("play", sub)) => handle_play(sub),
         Some(("proxy", sub)) => handle_proxy(sub),
-        Some(("oauth2", sub)) => handle_oauth2(sub, gdrive).await,
         _ => unreachable!("subcommand_required is set"),
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Subcommand definitions
@@ -57,278 +96,285 @@ pub async fn handle_gdrive(matches: &ArgMatches, gdrive: &GDriveClient) -> Resul
 
 fn account_subcommand() -> Command {
     Command::new("account")
+        .aliases(["a", "acc"])
         .about("Manage Google Drive accounts")
+        .subcommand(Command::new("add").about("Add a new Google Drive account with OAuth2"))
         .subcommand(
-            Command::new("list").about("List configured accounts"),
+            Command::new("list")
+                .aliases(["ls"])
+                .about("List all configured accounts")
+                .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON")),
         )
         .subcommand(
-            Command::new("set")
-                .about("Set the default account")
-                .arg(
-                    Arg::new("email")
-                        .required(true)
-                        .help("Account email to set as default"),
-                ),
+            Command::new("current")
+                .aliases(["c"])
+                .about("Show current account"),
         )
         .subcommand(
-            Command::new("info").about("Show current account info"),
+            Command::new("info")
+                .about("Show account information and token status")
+                .arg(Arg::new("account_name").help("Account name (optional)")),
+        )
+        .subcommand(
+            Command::new("switch")
+                .aliases(["s"])
+                .about("Switch to a different account")
+                .arg(Arg::new("account_name").required(true).help("Account name to switch to")),
+        )
+        .subcommand(
+            Command::new("remove")
+                .aliases(["r", "rm", "del"])
+                .about("Remove an account")
+                .arg(Arg::new("account_name").required(true).help("Account name to remove")),
+        )
+        .subcommand(
+            Command::new("import")
+                .aliases(["i", "im"])
+                .about("Import account configuration")
+                .arg(Arg::new("archive_path").required(true).help("Path to archive file")),
+        )
+        .subcommand(
+            Command::new("export")
+                .aliases(["e", "ex"])
+                .about("Export account configuration")
+                .arg(Arg::new("account_name").required(true).help("Account name to export")),
+        )
+        .subcommand(
+            Command::new("stats")
+                .aliases(["st"])
+                .about("Show storage usage and largest files")
+                .arg(Arg::new("top").long("top").value_parser(clap::value_parser!(u32)).default_value("20").help("Number of largest files to show"))
+                .arg(Arg::new("files").long("files").action(clap::ArgAction::SetTrue).help("Show largest files")),
+        )
+}
+
+fn info_subcommand() -> Command {
+    Command::new("info")
+        .aliases(["i"])
+        .about("Show file information")
+        .arg(Arg::new("file-id").required(true).help("File ID to inspect"))
+        .arg(Arg::new("size-in-bytes").long("size-in-bytes").action(clap::ArgAction::SetTrue).help("Display size in bytes"))
+}
+
+fn list_subcommand() -> Command {
+    Command::new("list")
+        .aliases(["ls"])
+        .about("List files")
+        .arg(Arg::new("max").long("max").value_parser(clap::value_parser!(u32)).default_value("100").help("Max files to list"))
+        .arg(Arg::new("query").long("query").help("Query. See https://developers.google.com/drive/search-parameters"))
+        .arg(Arg::new("order-by").long("order-by").help("Order by"))
+        .arg(Arg::new("parent").long("parent").help("List files in a specific folder (directory ID)"))
+        .arg(Arg::new("drive").long("drive").help("List files on a shared drive (drive ID)"))
+        .arg(Arg::new("skip-header").long("skip-header").action(clap::ArgAction::SetTrue).help("Don't print header"))
+        .arg(Arg::new("full-name").long("full-name").action(clap::ArgAction::SetTrue).help("Show full file name without truncating"))
+        .arg(Arg::new("field-separator").long("field-separator").default_value("\t").help("Field separator"))
+        .arg(Arg::new("folder-size").long("folder-size").action(clap::ArgAction::SetTrue).help("Calculate folder sizes"))
+        .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON for machine-readable parsing"))
+        .arg(Arg::new("interactive").long("interactive").action(clap::ArgAction::SetTrue).help("Interactively select a file to play"))
+}
+
+fn search_subcommand() -> Command {
+    Command::new("search")
+        .aliases(["find", "s"])
+        .about("Search files in Google Drive")
+        .arg(Arg::new("search_text").required(true).num_args(1..).help("Search text"))
+        .arg(Arg::new("max").long("max").value_parser(clap::value_parser!(u32)).default_value("100").help("Max files to return"))
+        .arg(Arg::new("order-by").long("order-by").help("Order by"))
+        .arg(Arg::new("parent").long("parent").help("Search in a specific folder (directory ID)"))
+        .arg(Arg::new("drive").long("drive").help("Search in a shared drive (drive ID)"))
+        .arg(Arg::new("skip-header").long("skip-header").action(clap::ArgAction::SetTrue).help("Don't print header"))
+        .arg(Arg::new("full-name").long("full-name").action(clap::ArgAction::SetTrue).help("Show full file name without truncating"))
+        .arg(Arg::new("field-separator").long("field-separator").default_value("\t").help("Field separator"))
+        .arg(Arg::new("folder-size").long("folder-size").action(clap::ArgAction::SetTrue).help("Calculate folder sizes"))
+        .arg(Arg::new("exact-name").long("exact-name").action(clap::ArgAction::SetTrue).help("Search for exact filename match"))
+        .arg(Arg::new("type").long("type").help("Filter by file type (video, image, document, pdf, etc.)"))
+        .arg(Arg::new("modified-after").long("modified-after").help("Only show files modified after date (YYYY-MM-DD)"))
+        .arg(Arg::new("modified-before").long("modified-before").help("Only show files modified before date (YYYY-MM-DD)"))
+        .arg(Arg::new("include-trashed").long("include-trashed").action(clap::ArgAction::SetTrue).help("Include trashed files"))
+        .arg(Arg::new("raw-query").long("raw-query").help("Use raw Google Drive API query"))
+        .arg(Arg::new("interactive").long("interactive").action(clap::ArgAction::SetTrue).help("Interactively select a file to play from results"))
+}
+
+fn upload_subcommand() -> Command {
+    Command::new("upload")
+        .aliases(["u", "up"])
+        .about("Upload files with optimized performance")
+        .arg(Arg::new("path").num_args(1..=100).help("Local file path(s) to upload"))
+        .arg(Arg::new("mime").long("mime").help("Force mime type [default: auto-detect]"))
+        .arg(Arg::new("parent").long("parent").num_args(1..).help("Upload to an existing directory"))
+        .arg(Arg::new("recursive").long("recursive").action(clap::ArgAction::SetTrue).help("Upload directories"))
+        .arg(Arg::new("chunk-size").long("chunk-size").value_parser(clap::value_parser!(u32)).default_value("64").help("Set chunk size in MB"))
+        .arg(Arg::new("print-chunk-errors").long("print-chunk-errors").action(clap::ArgAction::SetTrue).help("Print errors during chunk upload"))
+        .arg(Arg::new("print-chunk-info").long("print-chunk-info").action(clap::ArgAction::SetTrue).help("Print details about each chunk"))
+        .arg(Arg::new("concurrent").long("concurrent").action(clap::ArgAction::SetTrue).help("Enable concurrent uploads"))
+        .arg(Arg::new("max-workers").long("max-workers").value_parser(clap::value_parser!(u32)).default_value("4").help("Maximum concurrent upload workers (2-16)"))
+        .arg(Arg::new("job-id").long("job-id").help("Job ID for status tracking"))
+}
+
+fn download_subcommand() -> Command {
+    Command::new("download")
+        .aliases(["d", "dl"])
+        .about("Download files with optimized performance")
+        .long_about("Download a file or directory from Google Drive by file ID, URL, or filename.")
+        .arg(Arg::new("file-id").required(true).num_args(1..).help("File ID, URL, or name to download"))
+        .arg(Arg::new("overwrite").long("overwrite").action(clap::ArgAction::SetTrue).help("Overwrite existing files"))
+        .arg(Arg::new("follow-shortcuts").long("follow-shortcuts").action(clap::ArgAction::SetTrue).help("Follow shortcut and download target file"))
+        .arg(Arg::new("recursive").long("recursive").action(clap::ArgAction::SetTrue).help("Download directories"))
+        .arg(Arg::new("destination").long("destination").help("Path where the file should be downloaded to"))
+        .arg(Arg::new("stdout").long("stdout").action(clap::ArgAction::SetTrue).help("Write file to stdout"))
+        .arg(Arg::new("concurrent").long("concurrent").action(clap::ArgAction::SetTrue).help("Enable concurrent downloads"))
+        .arg(Arg::new("max-workers").long("max-workers").value_parser(clap::value_parser!(u32)).default_value("4").help("Maximum concurrent download workers (2-16)"))
+        .arg(Arg::new("buffer-size").long("buffer-size").value_parser(clap::value_parser!(u32)).default_value("2048").help("Download buffer size in KB (64-8192)"))
+        .arg(Arg::new("default").long("default").action(clap::ArgAction::SetTrue).help("Use legacy GDrive downloader instead of aria2"))
+}
+
+fn delete_subcommand() -> Command {
+    Command::new("delete")
+        .aliases(["rm", "del"])
+        .about("Delete file by ID or name")
+        .arg(Arg::new("file-id").required(true).help("File ID or name to delete"))
+        .arg(Arg::new("recursive").long("recursive").action(clap::ArgAction::SetTrue).help("Delete directory and all its content"))
+        .arg(Arg::new("dry-run").long("dry-run").action(clap::ArgAction::SetTrue).help("Show what would be deleted"))
+        .arg(Arg::new("all").long("all").action(clap::ArgAction::SetTrue).help("Delete all files with this name"))
+        .arg(Arg::new("yes").long("yes").action(clap::ArgAction::SetTrue).help("Skip confirmation prompts"))
+        .arg(Arg::new("parent").long("parent").help("Only search in specific folder (directory ID)"))
+}
+
+fn mkdir_subcommand() -> Command {
+    Command::new("mkdir")
+        .aliases(["c"])
+        .about("Create directory")
+        .arg(Arg::new("name").required(true).help("Folder name"))
+        .arg(Arg::new("parent").long("parent").num_args(1..).help("Create in an existing directory"))
+}
+
+fn rename_subcommand() -> Command {
+    Command::new("rename")
+        .aliases(["ren"])
+        .about("Rename file/directory")
+        .arg(Arg::new("file-id").required(true).help("File ID to rename"))
+        .arg(Arg::new("new-name").required(true).help("New name"))
+}
+
+fn move_subcommand() -> Command {
+    Command::new("move")
+        .aliases(["mv"])
+        .about("Move file/directory")
+        .arg(Arg::new("file-id").required(true).help("File ID to move"))
+        .arg(Arg::new("folder-id").required(true).help("Target folder ID"))
+}
+
+fn copy_subcommand() -> Command {
+    Command::new("copy")
+        .aliases(["cp"])
+        .about("Copy file")
+        .arg(Arg::new("file-id").required(true).help("File ID to copy"))
+        .arg(Arg::new("folder-id").required(true).help("Target folder ID"))
+}
+
+fn import_subcommand() -> Command {
+    Command::new("import")
+        .about("Import file as a Google document")
+        .long_about("Import file as a Google document/spreadsheet/presentation. Example file types: doc, docx, odt, pdf, html, xls, xlsx, csv, ods, ppt, pptx, odp")
+        .arg(Arg::new("file-path").required(true).help("Local file path to import"))
+        .arg(Arg::new("parent").long("parent").num_args(1..).help("Upload to an existing directory"))
+}
+
+fn export_subcommand() -> Command {
+    Command::new("export")
+        .about("Export Google document to file")
+        .arg(Arg::new("file-id").required(true).help("File ID to export"))
+        .arg(Arg::new("file-path").required(true).help("Local file path for export"))
+        .arg(Arg::new("overwrite").long("overwrite").action(clap::ArgAction::SetTrue).help("Overwrite existing files"))
+}
+
+fn generate_playlist_subcommand() -> Command {
+    Command::new("generate-playlist")
+        .about("Generate Kodi playlist from folder or query")
+        .arg(Arg::new("parent").long("parent").help("Generate playlist from specific folder (directory ID)"))
+        .arg(Arg::new("query").long("query").default_value("mimeType contains 'video/'").help("Search query for files to include"))
+        .arg(Arg::new("output").long("output").help("Output file path (default: stdout)"))
+        .arg(Arg::new("max").long("max").value_parser(clap::value_parser!(u32)).default_value("100").help("Maximum number of files to include"))
+        .arg(Arg::new("name").long("name").default_value("Google Drive Playlist").help("Playlist name"))
+}
+
+fn drives_subcommand() -> Command {
+    Command::new("drives")
+        .about("Manage shared drives")
+        .subcommand(
+            Command::new("list")
+                .aliases(["ls"])
+                .about("List shared drives")
+                .arg(Arg::new("skip-header").long("skip-header").action(clap::ArgAction::SetTrue).help("Don't print header"))
+                .arg(Arg::new("field-separator").long("field-separator").default_value("\t").help("Field separator"))
+                .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON")),
         )
 }
 
 fn browse_subcommand() -> Command {
     Command::new("browse")
         .about("Interactive Google Drive file browser")
-        .arg(
-            Arg::new("folder-id")
-                .long("folder-id")
-                .short('f')
-                .help("Start browsing from a specific folder ID"),
-        )
-        .arg(
-            Arg::new("account")
-                .long("account")
-                .short('a')
-                .help("Account to use (overrides default)"),
-        )
+        .arg(Arg::new("folder-id").long("folder-id").short('f').help("Start browsing from a specific folder ID"))
 }
 
-fn file_subcommand() -> Command {
-    Command::new("file")
-        .about("File operations on Google Drive")
+fn permissions_subcommand() -> Command {
+    Command::new("permissions")
+        .aliases(["per"])
+        .about("Manage file permissions")
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
             Command::new("list")
-                .about("List files in a folder")
-                .arg(
-                    Arg::new("folder-id")
-                        .long("folder-id")
-                        .short('f')
-                        .help("Folder ID to list (defaults to root)"),
-                )
-                .arg(
-                    Arg::new("page-size")
-                        .long("page-size")
-                        .short('n')
-                        .value_parser(clap::value_parser!(u32))
-                        .default_value("100")
-                        .help("Number of files per page"),
-                ),
+                .aliases(["ls"])
+                .about("List file permissions")
+                .arg(Arg::new("file-id").required(true).help("File ID"))
+                .arg(Arg::new("skip-header").long("skip-header").action(clap::ArgAction::SetTrue).help("Don't print header"))
+                .arg(Arg::new("field-separator").long("field-separator").default_value("\t").help("Field separator"))
+                .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON")),
         )
-        .subcommand(
-            Command::new("info")
-                .about("Show file metadata")
-                .arg(
-                    Arg::new("file-id")
-                        .required(true)
-                        .help("File ID to inspect"),
-                ),
-        )
-        .subcommand(
-            Command::new("upload")
-                .about("Upload a file")
-                .arg(
-                    Arg::new("path")
-                        .required(true)
-                        .help("Local file path to upload"),
-                )
-                .arg(
-                    Arg::new("parent-id")
-                        .long("parent-id")
-                        .short('p')
-                        .help("Parent folder ID"),
-                ),
-        )
-        .subcommand(
-            Command::new("download")
-                .about("Download a file")
-                .arg(
-                    Arg::new("file-id")
-                        .required(true)
-                        .help("File ID to download"),
-                )
-                .arg(
-                    Arg::new("output")
-                        .long("output")
-                        .short('o')
-                        .help("Output file path"),
-                ),
-        )
-        .subcommand(
-            Command::new("delete")
-                .about("Delete a file or folder")
-                .arg(
-                    Arg::new("file-id")
-                        .required(true)
-                        .help("File ID to delete"),
-                ),
-        )
-        .subcommand(
-            Command::new("move")
-                .about("Move a file to a different folder")
-                .arg(
-                    Arg::new("file-id")
-                        .required(true)
-                        .help("File ID to move"),
-                )
-                .arg(
-                    Arg::new("target-folder-id")
-                        .required(true)
-                        .help("Target folder ID"),
-                ),
-        )
-        .subcommand(
-            Command::new("copy")
-                .about("Copy a file")
-                .arg(
-                    Arg::new("file-id")
-                        .required(true)
-                        .help("File ID to copy"),
-                )
-                .arg(
-                    Arg::new("name")
-                        .long("name")
-                        .help("New name for the copy"),
-                )
-                .arg(
-                    Arg::new("parent-id")
-                        .long("parent-id")
-                        .short('p')
-                        .help("Target parent folder ID"),
-                ),
-        )
-        .subcommand(
-            Command::new("mkdir")
-                .about("Create a folder")
-                .arg(
-                    Arg::new("name")
-                        .required(true)
-                        .help("Folder name"),
-                )
-                .arg(
-                    Arg::new("parent-id")
-                        .long("parent-id")
-                        .short('p')
-                        .help("Parent folder ID"),
-                ),
-        )
-}
-
-fn drive_subcommand() -> Command {
-    Command::new("drive")
-        .about("Shared drive operations")
-        .subcommand(
-            Command::new("list").about("List shared drives"),
-        )
-        .subcommand(
-            Command::new("info")
-                .about("Show shared drive info")
-                .arg(
-                    Arg::new("drive-id")
-                        .required(true)
-                        .help("Shared drive ID"),
-                ),
-        )
-}
-
-fn permission_subcommand() -> Command {
-    Command::new("permission")
-        .about("Manage file permissions and sharing")
-        .subcommand_required(true)
-        .arg_required_else_help(true)
         .subcommand(
             Command::new("share")
-                .about("Share a file with a user")
-                .arg(
-                    Arg::new("file-id")
-                        .required(true)
-                        .help("File ID to share"),
-                )
-                .arg(
-                    Arg::new("email")
-                        .required(true)
-                        .help("Email address to share with"),
-                )
-                .arg(
-                    Arg::new("role")
-                        .long("role")
-                        .short('r')
-                        .default_value("reader")
-                        .value_parser(["reader", "writer", "commenter", "owner"])
-                        .help("Permission role"),
-                ),
-        )
-        .subcommand(
-            Command::new("list")
-                .about("List permissions on a file")
-                .arg(
-                    Arg::new("file-id")
-                        .required(true)
-                        .help("File ID to list permissions for"),
-                ),
+                .about("Share file with user")
+                .arg(Arg::new("file-id").required(true).help("File ID to share"))
+                .arg(Arg::new("email").required(true).help("Email address to share with"))
+                .arg(Arg::new("role").long("role").default_value("reader").value_parser(["reader", "writer", "commenter", "owner"]).help("Permission role"))
+                .arg(Arg::new("type").long("type").default_value("user").value_parser(["user", "group", "domain", "anyone"]).help("Permission type"))
+                .arg(Arg::new("domain").long("domain").help("Domain for domain permissions"))
+                .arg(Arg::new("discoverable").long("discoverable").action(clap::ArgAction::SetTrue).help("Make file discoverable by search")),
         )
         .subcommand(
             Command::new("revoke")
-                .about("Revoke a permission")
-                .arg(
-                    Arg::new("file-id")
-                        .required(true)
-                        .help("File ID"),
-                )
-                .arg(
-                    Arg::new("permission-id")
-                        .required(true)
-                        .help("Permission ID to revoke"),
-                ),
+                .about("Revoke file permission")
+                .arg(Arg::new("file-id").required(true).help("File ID"))
+                .arg(Arg::new("permission-id").help("Permission ID to revoke"))
+                .arg(Arg::new("all").long("all").action(clap::ArgAction::SetTrue).help("Revoke all permissions (except owner)")),
         )
 }
 
 fn play_subcommand() -> Command {
     Command::new("play")
         .about("Stream media from Google Drive")
-        .arg(
-            Arg::new("file-id")
-                .required(true)
-                .help("File ID to stream"),
-        )
-        .arg(
-            Arg::new("player")
-                .long("player")
-                .default_value("mpv")
-                .help("Media player to use"),
-        )
+        .arg(Arg::new("file-id").required(true).help("File ID to stream"))
+        .arg(Arg::new("player").long("player").default_value("mpv").help("Media player to use"))
 }
 
 fn proxy_subcommand() -> Command {
     Command::new("proxy")
         .about("Proxy Google Drive file downloads")
-        .arg(
-            Arg::new("file-id")
-                .required(true)
-                .help("File ID to proxy"),
-        )
-        .arg(
-            Arg::new("port")
-                .long("port")
-                .short('p')
-                .value_parser(clap::value_parser!(u16))
-                .default_value("8080")
-                .help("Local proxy port"),
+        .subcommand(
+            Command::new("start")
+                .about("Start the GDrive proxy server")
+                .arg(Arg::new("host").long("host").default_value("0.0.0.0").help("Bind host"))
+                .arg(Arg::new("port").long("port").value_parser(clap::value_parser!(u16)).default_value("8088").help("Local proxy port")),
         )
 }
 
 fn oauth2_subcommand() -> Command {
     Command::new("oauth2")
         .about("OAuth2 authentication flow")
-        .subcommand(
-            Command::new("login").about("Start OAuth2 login flow"),
-        )
-        .subcommand(
-            Command::new("refresh").about("Refresh the access token"),
-        )
-        .subcommand(
-            Command::new("status").about("Show current auth status"),
-        )
+        .subcommand(Command::new("login").about("Start OAuth2 login flow"))
+        .subcommand(Command::new("refresh").about("Refresh the access token"))
+        .subcommand(Command::new("status").about("Show current auth status"))
 }
 
 
@@ -398,117 +444,142 @@ async fn handle_oauth2(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()
     }
 }
 
-async fn handle_file(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
-    match matches.subcommand() {
-        Some(("list", sub)) => {
-            let folder_id = sub.get_one::<String>("folder-id");
-            let page_size = sub.get_one::<u32>("page-size").copied();
-            let file_list = gdrive
-                .list_files(folder_id.map(|s| s.as_str()), None, page_size)
-                .await?;
+async fn handle_info(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let file_id = matches.get_one::<String>("file-id").unwrap();
+    let file = gdrive.get_file_metadata(file_id).await?;
+    display_file_metadata(&file);
+    Ok(())
+}
 
-            if file_list.files.is_empty() {
-                output::info("No files found.");
-            } else {
-                println!("{:<44} {:<40} {:>10} {}", "ID", "Name", "Size", "Type");
-                println!("{}", "-".repeat(100));
-                for f in &file_list.files {
-                    let size = f
-                        .size
-                        .map(|s| format_size(s))
-                        .unwrap_or_else(|| "-".to_string());
-                    println!("{:<44} {:<40} {:>10} {}", f.id, f.name, size, f.mime_type);
-                }
-                println!("\n{} file(s)", file_list.files.len());
-                if file_list.next_page_token.is_some() {
-                    output::info("More files available. Use pagination to see all.");
-                }
-            }
-            Ok(())
-        }
-        Some(("info", sub)) => {
-            let file_id = sub.get_one::<String>("file-id").unwrap();
-            let file = gdrive.get_file_metadata(file_id).await?;
-            display_file_metadata(&file);
-            Ok(())
-        }
-        Some(("upload", sub)) => {
-            let path_str = sub.get_one::<String>("path").unwrap();
-            let parent_id = sub.get_one::<String>("parent-id");
-            let path = Path::new(path_str);
+async fn handle_list(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let folder_id = matches.get_one::<String>("parent");
+    let page_size = matches.get_one::<u32>("max").copied();
+    let file_list = gdrive
+        .list_files(folder_id.map(|s| s.as_str()), None, page_size)
+        .await?;
 
-            if !path.exists() {
-                return Err(BosuaError::Command(format!(
-                    "File not found: {}",
-                    path.display()
-                )));
-            }
-
-            let file = gdrive
-                .upload_file(path, parent_id.map(|s| s.as_str()))
-                .await?;
-            output::success(&format!("Uploaded: {} ({})", file.name, file.id));
-            Ok(())
+    if file_list.files.is_empty() {
+        output::info("No files found.");
+    } else {
+        println!("{:<44} {:<40} {:>10} {}", "ID", "Name", "Size", "Type");
+        println!("{}", "-".repeat(100));
+        for f in &file_list.files {
+            let size = f
+                .size
+                .map(|s| format_size(s))
+                .unwrap_or_else(|| "-".to_string());
+            println!("{:<44} {:<40} {:>10} {}", f.id, f.name, size, f.mime_type);
         }
-        Some(("download", sub)) => {
-            let file_id = sub.get_one::<String>("file-id").unwrap();
-            let output_path = sub.get_one::<String>("output");
-
-            // Get metadata to determine filename
-            let meta = gdrive.get_file_metadata(file_id).await?;
-            let dest = match output_path {
-                Some(p) => std::path::PathBuf::from(p),
-                None => std::path::PathBuf::from(&meta.name),
-            };
-
-            let bytes = gdrive.download_file(file_id).await?;
-            tokio::fs::write(&dest, &bytes).await?;
-            output::success(&format!(
-                "Downloaded: {} ({} bytes) -> {}",
-                meta.name,
-                bytes.len(),
-                dest.display()
-            ));
-            Ok(())
+        println!("\n{} file(s)", file_list.files.len());
+        if file_list.next_page_token.is_some() {
+            output::info("More files available. Use pagination to see all.");
         }
-        Some(("delete", sub)) => {
-            let file_id = sub.get_one::<String>("file-id").unwrap();
-            gdrive.delete_file(file_id).await?;
-            output::success(&format!("Deleted: {}", file_id));
-            Ok(())
-        }
-        Some(("move", sub)) => {
-            let file_id = sub.get_one::<String>("file-id").unwrap();
-            let target = sub.get_one::<String>("target-folder-id").unwrap();
-            let file = gdrive.move_file(file_id, target).await?;
-            output::success(&format!("Moved: {} -> folder {}", file.name, target));
-            Ok(())
-        }
-        Some(("copy", sub)) => {
-            let file_id = sub.get_one::<String>("file-id").unwrap();
-            let new_name = sub.get_one::<String>("name");
-            let parent_id = sub.get_one::<String>("parent-id");
-            let file = gdrive
-                .copy_file(
-                    file_id,
-                    new_name.map(|s| s.as_str()),
-                    parent_id.map(|s| s.as_str()),
-                )
-                .await?;
-            output::success(&format!("Copied: {} ({})", file.name, file.id));
-            Ok(())
-        }
-        Some(("mkdir", sub)) => {
-            let name = sub.get_one::<String>("name").unwrap();
-            let parent_id = sub.get_one::<String>("parent-id");
-            let folder = gdrive
-                .create_folder(name, parent_id.map(|s| s.as_str()))
-                .await?;
-            output::success(&format!("Created folder: {} ({})", folder.name, folder.id));
-            Ok(())
-        }
-        _ => unreachable!("subcommand_required is set"),
     }
+    Ok(())
+}
+
+async fn handle_search(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
+    output::info("gdrive search: not yet implemented in Rust backend");
+    Ok(())
+}
+
+async fn handle_upload(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let paths: Vec<&String> = matches.get_many::<String>("path").unwrap_or_default().collect();
+    if paths.is_empty() {
+        return Err(BosuaError::Command("No file path provided".into()));
+    }
+    let parent_id = matches.get_one::<String>("parent");
+    let path = Path::new(paths[0]);
+
+    if !path.exists() {
+        return Err(BosuaError::Command(format!(
+            "File not found: {}",
+            path.display()
+        )));
+    }
+
+    let file = gdrive
+        .upload_file(path, parent_id.map(|s| s.as_str()))
+        .await?;
+    output::success(&format!("Uploaded: {} ({})", file.name, file.id));
+    Ok(())
+}
+
+async fn handle_download(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let file_ids: Vec<&String> = matches.get_many::<String>("file-id").unwrap().collect();
+    let output_path = matches.get_one::<String>("destination");
+
+    let file_id = file_ids[0];
+    let meta = gdrive.get_file_metadata(file_id).await?;
+    let dest = match output_path {
+        Some(p) => std::path::PathBuf::from(p),
+        None => std::path::PathBuf::from(&meta.name),
+    };
+
+    let bytes = gdrive.download_file(file_id).await?;
+    tokio::fs::write(&dest, &bytes).await?;
+    output::success(&format!(
+        "Downloaded: {} ({} bytes) -> {}",
+        meta.name,
+        bytes.len(),
+        dest.display()
+    ));
+    Ok(())
+}
+
+async fn handle_delete(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let file_id = matches.get_one::<String>("file-id").unwrap();
+    gdrive.delete_file(file_id).await?;
+    output::success(&format!("Deleted: {}", file_id));
+    Ok(())
+}
+
+async fn handle_mkdir(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let name = matches.get_one::<String>("name").unwrap();
+    let parent_id = matches.get_one::<String>("parent");
+    let folder = gdrive
+        .create_folder(name, parent_id.map(|s| s.as_str()))
+        .await?;
+    output::success(&format!("Created folder: {} ({})", folder.name, folder.id));
+    Ok(())
+}
+
+async fn handle_rename(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
+    output::info("gdrive rename: not yet implemented in Rust backend");
+    Ok(())
+}
+
+async fn handle_move(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let file_id = matches.get_one::<String>("file-id").unwrap();
+    let target = matches.get_one::<String>("folder-id").unwrap();
+    let file = gdrive.move_file(file_id, target).await?;
+    output::success(&format!("Moved: {} -> folder {}", file.name, target));
+    Ok(())
+}
+
+async fn handle_copy(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let file_id = matches.get_one::<String>("file-id").unwrap();
+    let parent_id = matches.get_one::<String>("folder-id");
+    let file = gdrive
+        .copy_file(file_id, None, parent_id.map(|s| s.as_str()))
+        .await?;
+    output::success(&format!("Copied: {} ({})", file.name, file.id));
+    Ok(())
+}
+
+async fn handle_import(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
+    output::info("gdrive import: not yet implemented in Rust backend");
+    Ok(())
+}
+
+async fn handle_export(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
+    output::info("gdrive export: not yet implemented in Rust backend");
+    Ok(())
+}
+
+async fn handle_generate_playlist(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
+    output::info("gdrive generate-playlist: not yet implemented in Rust backend");
+    Ok(())
 }
 
 async fn handle_account(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
@@ -518,10 +589,9 @@ async fn handle_account(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<(
             println!("Default account: {}", account);
             Ok(())
         }
-        Some(("set", sub)) => {
-            let email = sub.get_one::<String>("email").unwrap();
-            gdrive.update_default_account(email).await;
-            output::success(&format!("Default account set to: {}", email));
+        Some(("current", _)) => {
+            let account = gdrive.default_account().await;
+            println!("Current account: {}", account);
             Ok(())
         }
         Some(("info", _)) => {
@@ -542,8 +612,50 @@ async fn handle_account(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<(
             }
             Ok(())
         }
+        Some(("switch", sub)) => {
+            let name = sub.get_one::<String>("account_name").unwrap();
+            gdrive.update_default_account(name).await;
+            output::success(&format!("Switched to account: {}", name));
+            Ok(())
+        }
+        Some(("remove", sub)) => {
+            let name = sub.get_one::<String>("account_name").unwrap();
+            output::info(&format!("gdrive account remove {}: not yet implemented", name));
+            Ok(())
+        }
+        Some(("add", _)) => {
+            output::info("gdrive account add: not yet implemented");
+            Ok(())
+        }
+        Some(("import", sub)) => {
+            let path = sub.get_one::<String>("archive_path").unwrap();
+            output::info(&format!("gdrive account import {}: not yet implemented", path));
+            Ok(())
+        }
+        Some(("export", sub)) => {
+            let name = sub.get_one::<String>("account_name").unwrap();
+            output::info(&format!("gdrive account export {}: not yet implemented", name));
+            Ok(())
+        }
+        Some(("stats", _)) => {
+            output::info("gdrive account stats: not yet implemented");
+            Ok(())
+        }
         _ => {
-            output::info("account: use a subcommand (list, set, info)");
+            output::info("account: use a subcommand (add, list, current, info, switch, remove, import, export, stats)");
+            Ok(())
+        }
+    }
+}
+
+fn handle_drives(matches: &ArgMatches) -> Result<()> {
+    match matches.subcommand() {
+        Some(("list", _)) => {
+            output::info("Shared drive listing is not yet implemented.");
+            Ok(())
+        }
+        _ => {
+            output::info("drives: use a subcommand (list)");
             Ok(())
         }
     }
@@ -557,7 +669,7 @@ async fn handle_browse(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()
     Ok(())
 }
 
-async fn handle_permission(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+async fn handle_permissions(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
     match matches.subcommand() {
         Some(("share", sub)) => {
             let file_id = sub.get_one::<String>("file-id").unwrap();
@@ -579,7 +691,6 @@ async fn handle_permission(matches: &ArgMatches, gdrive: &GDriveClient) -> Resul
         }
         Some(("list", sub)) => {
             let file_id = sub.get_one::<String>("file-id").unwrap();
-            // list_files permissions not directly available; show file info instead
             let file = gdrive.get_file_metadata(file_id).await?;
             output::info(&format!("Permissions for: {} ({})", file.name, file.id));
             output::info("Use the Google Drive web interface for detailed permission listing.");
@@ -587,8 +698,6 @@ async fn handle_permission(matches: &ArgMatches, gdrive: &GDriveClient) -> Resul
         }
         Some(("revoke", sub)) => {
             let file_id = sub.get_one::<String>("file-id").unwrap();
-            let _perm_id = sub.get_one::<String>("permission-id").unwrap();
-            // No direct revoke method on GDriveClient; report limitation
             output::info(&format!(
                 "Permission revocation for file {} is not yet supported via the API.",
                 file_id
@@ -596,24 +705,6 @@ async fn handle_permission(matches: &ArgMatches, gdrive: &GDriveClient) -> Resul
             Ok(())
         }
         _ => unreachable!("subcommand_required is set"),
-    }
-}
-
-fn handle_drive(matches: &ArgMatches) -> Result<()> {
-    match matches.subcommand() {
-        Some(("list", _)) => {
-            output::info("Shared drive listing is not yet implemented.");
-            Ok(())
-        }
-        Some(("info", sub)) => {
-            let id = sub.get_one::<String>("drive-id").unwrap();
-            output::info(&format!("Shared drive info for {}: not yet implemented.", id));
-            Ok(())
-        }
-        _ => {
-            output::info("drive: use a subcommand (list, info)");
-            Ok(())
-        }
     }
 }
 
@@ -628,15 +719,22 @@ fn handle_play(matches: &ArgMatches) -> Result<()> {
 }
 
 fn handle_proxy(matches: &ArgMatches) -> Result<()> {
-    let file_id = matches.get_one::<String>("file-id").unwrap();
-    let port = matches.get_one::<u16>("port").unwrap();
-    output::info(&format!(
-        "gdrive proxy {} on port {}: use `bosua proxy start` instead.",
-        file_id, port
-    ));
-    Ok(())
+    match matches.subcommand() {
+        Some(("start", sub)) => {
+            let host = sub.get_one::<String>("host").unwrap();
+            let port = sub.get_one::<u16>("port").unwrap();
+            output::info(&format!(
+                "gdrive proxy start on {}:{}: not yet implemented",
+                host, port
+            ));
+            Ok(())
+        }
+        _ => {
+            output::info("gdrive proxy: use a subcommand (start)");
+            Ok(())
+        }
+    }
 }
-
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -707,27 +805,55 @@ mod tests {
     }
 
     #[test]
-    fn test_gdrive_file_list_subcommand() {
+    fn test_gdrive_alias_gd() {
+        let meta = gdrive_meta();
+        assert!(meta.aliases.contains(&"gd".to_string()));
+    }
+
+    #[test]
+    fn test_gdrive_flat_info() {
         let cmd = gdrive_command();
         let matches = cmd
-            .try_get_matches_from(["gdrive", "file", "list", "--folder-id", "abc123"])
+            .try_get_matches_from(["gdrive", "info", "file123"])
             .unwrap();
         let (name, sub) = matches.subcommand().unwrap();
-        assert_eq!(name, "file");
-        let (file_sub_name, file_sub) = sub.subcommand().unwrap();
-        assert_eq!(file_sub_name, "list");
+        assert_eq!(name, "info");
         assert_eq!(
-            file_sub.get_one::<String>("folder-id").map(|s| s.as_str()),
+            sub.get_one::<String>("file-id").map(|s| s.as_str()),
+            Some("file123")
+        );
+    }
+
+    #[test]
+    fn test_gdrive_flat_list() {
+        let cmd = gdrive_command();
+        let matches = cmd
+            .try_get_matches_from(["gdrive", "list", "--parent", "abc123"])
+            .unwrap();
+        let (name, sub) = matches.subcommand().unwrap();
+        assert_eq!(name, "list");
+        assert_eq!(
+            sub.get_one::<String>("parent").map(|s| s.as_str()),
             Some("abc123")
         );
     }
 
     #[test]
-    fn test_gdrive_permission_share() {
+    fn test_gdrive_flat_download() {
+        let cmd = gdrive_command();
+        let matches = cmd
+            .try_get_matches_from(["gdrive", "download", "file123", "--destination", "/tmp"])
+            .unwrap();
+        let (name, _) = matches.subcommand().unwrap();
+        assert_eq!(name, "download");
+    }
+
+    #[test]
+    fn test_gdrive_permissions_share() {
         let cmd = gdrive_command();
         let matches = cmd
             .try_get_matches_from([
-                "gdrive", "permission", "share", "file123", "user@example.com", "--role", "writer",
+                "gdrive", "permissions", "share", "file123", "user@example.com", "--role", "writer",
             ])
             .unwrap();
         let (_, perm_sub) = matches.subcommand().unwrap();
@@ -770,20 +896,6 @@ mod tests {
     }
 
     #[test]
-    fn test_gdrive_proxy_subcommand() {
-        let cmd = gdrive_command();
-        let matches = cmd
-            .try_get_matches_from(["gdrive", "proxy", "file123", "--port", "9090"])
-            .unwrap();
-        let (_, proxy_sub) = matches.subcommand().unwrap();
-        assert_eq!(
-            proxy_sub.get_one::<String>("file-id").map(|s| s.as_str()),
-            Some("file123")
-        );
-        assert_eq!(proxy_sub.get_one::<u16>("port"), Some(&9090));
-    }
-
-    #[test]
     fn test_gdrive_meta() {
         let meta = gdrive_meta();
         assert_eq!(meta.name, "gdrive");
@@ -797,13 +909,25 @@ mod tests {
         let sub_names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
         assert!(sub_names.contains(&"account"));
         assert!(sub_names.contains(&"browse"));
-        assert!(sub_names.contains(&"file"));
-        assert!(sub_names.contains(&"drive"));
-        assert!(sub_names.contains(&"permission"));
+        assert!(sub_names.contains(&"info"));
+        assert!(sub_names.contains(&"list"));
+        assert!(sub_names.contains(&"search"));
+        assert!(sub_names.contains(&"upload"));
+        assert!(sub_names.contains(&"download"));
+        assert!(sub_names.contains(&"delete"));
+        assert!(sub_names.contains(&"mkdir"));
+        assert!(sub_names.contains(&"rename"));
+        assert!(sub_names.contains(&"move"));
+        assert!(sub_names.contains(&"copy"));
+        assert!(sub_names.contains(&"import"));
+        assert!(sub_names.contains(&"export"));
+        assert!(sub_names.contains(&"generate-playlist"));
+        assert!(sub_names.contains(&"drives"));
+        assert!(sub_names.contains(&"permissions"));
         assert!(sub_names.contains(&"play"));
         assert!(sub_names.contains(&"proxy"));
         assert!(sub_names.contains(&"oauth2"));
-        assert_eq!(sub_names.len(), 8);
+        assert_eq!(sub_names.len(), 20);
     }
 
     #[test]
