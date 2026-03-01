@@ -128,7 +128,7 @@ async fn handle_browse(matches: &ArgMatches, client: &GcpClient) -> Result<()> {
     }
 
     for f in &files {
-        let kind = if f.is_dir { "DIR " } else { "FILE" };
+        let kind = if f.is_directory() { "DIR " } else { "FILE" };
         let size_str = f
             .size
             .map(|s| format!("{s}"))
@@ -167,7 +167,7 @@ async fn handle_list(matches: &ArgMatches, client: &GcpClient) -> Result<()> {
 
     println!("Path: {}", file_list.path);
     for f in &file_list.files {
-        let kind = if f.is_dir { "DIR " } else { "FILE" };
+        let kind = if f.is_directory() { "DIR " } else { "FILE" };
         let size_str = f
             .size
             .map(|s| format!("{s}"))

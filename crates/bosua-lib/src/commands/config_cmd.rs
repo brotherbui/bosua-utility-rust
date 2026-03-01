@@ -7,7 +7,7 @@ use clap::{ArgMatches, Command};
 
 use crate::cli::{CommandBuilder, CommandCategory, CommandMeta};
 use crate::config::manager::DynamicConfigManager;
-use crate::errors::{BosuaError, Result};
+use crate::errors::Result;
 
 /// Build the `config` clap command.
 ///
@@ -27,14 +27,28 @@ pub fn config_meta() -> CommandMeta {
 }
 
 /// Handle the `config` command.
+///
+/// Matches Go's `PrintVariables()` — prints env dirs and paths.
 pub async fn handle_config(
     _matches: &ArgMatches,
-    config_mgr: &DynamicConfigManager,
+    _config_mgr: &DynamicConfigManager,
 ) -> Result<()> {
-    let config = config_mgr.get_config().await;
-    let json = serde_json::to_string_pretty(&config)
-        .map_err(|e| BosuaError::Config(format!("Failed to serialize config: {}", e)))?;
-    println!("{}", json);
+    let sc = crate::config::simplified::SimplifiedConfig::get();
+    println!("=== Bosua Utility Configuration ===");
+    println!("TEMP_DIR: {}", sc.temp_dir.display());
+    println!("DOWNLOAD_DIR: {}", sc.download_dir.display());
+    println!("HOME_DIR: {}", sc.home_dir.display());
+    println!("PWD: {}", sc.pwd.display());
+    println!("FILE_DIR: {}", sc.file_dir.display());
+    println!("INPUT_LINKS_FILE: {}", sc.input_links_file.display());
+    println!("DOWNLOAD_LOCK_FILE: {}", sc.download_lock_file.display());
+    println!("GDRIVE_LOCK_FILE: {}", sc.gdrive_lock_file.display());
+    println!("GDRIVE_RETRY_LOCK_FILE: {}", sc.gdrive_retry_lock_file.display());
+    println!("TOKEN_FILE: {}", sc.token_file.display());
+    println!("SHEETS_CACHE_FILE: {}", sc.sheets_cache_file.display());
+    if !sc.server_ip.is_empty() {
+        println!("BACKEND_IP: {}", sc.server_ip);
+    }
     Ok(())
 }
 
