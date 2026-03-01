@@ -713,6 +713,200 @@ fn save_current_gdrive_account(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// OAuth2 base path for global credentials: `~/.config/gdrive-oauth2/`
+fn gdrive_oauth2_base_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
+    home.join(".config").join("gdrive-oauth2")
+}
+
+/// Resolve OAuth2 credentials with Go-matching priority:
+/// 1. Current global OAuth2 credential from `~/.config/gdrive-oauth2/`
+/// 2. Environment variables `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET`
+/// 3. Interactive prompt
+fn resolve_oauth2_credentials() -> Result<(String, String)> {
+    use std::io::Write;
+
+    // Priority 1: Check for current OAuth2 credential
+    let oauth2_base = gdrive_oauth2_base_path();
+    let current_path = oauth2_base.join("current.json");
+    if current_path.exists() {
+        if let Ok(data) = std::fs::read_to_string(&current_path) {
+            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(current_name) = config.get("current").and_then(|v| v.as_str()) {
+                    let cred_path = oauth2_base.join(current_name).join("credentials.json");
+                    if let Ok(cred_data) = std::fs::read_to_string(&cred_path) {
+                        if let Ok(cred) = serde_json::from_str::<serde_json::Value>(&cred_data) {
+                            let cid = cred.get("client_id").and_then(|v| v.as_str()).unwrap_or("");
+                            let csec = cred.get("client_secret").and_then(|v| v.as_str()).unwrap_or("");
+                            if !cid.is_empty() && !csec.is_empty() {
+                                println!("Using OAuth2 credential '{}' (current)", current_name);
+                                return Ok((cid.to_string(), csec.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Priority 2: Environment variables
+    let env_id = std::env::var("GDRIVE_CLIENT_ID").unwrap_or_default();
+    let env_secret = std::env::var("GDRIVE_CLIENT_SECRET").unwrap_or_default();
+    if !env_id.is_empty() && !env_secret.is_empty() {
+        println!("Using OAuth2 credentials from environment variables");
+        return Ok((env_id, env_secret));
+    }
+
+    // Priority 3: Prompt
+    print!("Enter Client ID: ");
+    std::io::stdout().flush().ok();
+    let mut client_id = String::new();
+    std::io::stdin().read_line(&mut client_id).map_err(|e| {
+        BosuaError::Command(format!("Failed to read input: {}", e))
+    })?;
+    let client_id = client_id.trim().to_string();
+    if client_id.is_empty() {
+        return Err(BosuaError::Command("Client ID cannot be empty".into()));
+    }
+
+    print!("Enter Client Secret: ");
+    std::io::stdout().flush().ok();
+    let mut client_secret = String::new();
+    std::io::stdin().read_line(&mut client_secret).map_err(|e| {
+        BosuaError::Command(format!("Failed to read input: {}", e))
+    })?;
+    let client_secret = client_secret.trim().to_string();
+    if client_secret.is_empty() {
+        return Err(BosuaError::Command("Client Secret cannot be empty".into()));
+    }
+
+    Ok((client_id, client_secret))
+}
+
+/// Perform OAuth2 authorization flow matching Go's `AuthorizeUser()`.
+/// Opens browser with auth URL, starts local callback server on :8085,
+/// exchanges code for token.
+async fn authorize_user(
+    client_id: &str,
+    client_secret: &str,
+) -> Result<serde_json::Value> {
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let scopes = "https://www.googleapis.com/auth/drive+https://www.googleapis.com/auth/drive.metadata";
+    let redirect_uri = "http://localhost:8085";
+
+    // Build auth URL — scopes are already +-joined, client_id and redirect_uri are safe ASCII
+    let auth_url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline",
+        client_id,
+        "http%3A%2F%2Flocalhost%3A8085",
+        scopes,
+    );
+
+    println!();
+    println!("Gdrive requires permissions to manage your files on Google Drive.");
+    println!("Open the URL in your browser and follow the instructions:");
+    println!("{}", auth_url);
+    println!();
+
+    // Try to open browser automatically
+    let _ = std::process::Command::new("open").arg(&auth_url).spawn();
+
+    // Start local callback server on :8085
+    let listener = TcpListener::bind("127.0.0.1:8085").await.map_err(|e| {
+        BosuaError::Command(format!("Failed to start callback server on :8085: {}", e))
+    })?;
+
+    let (mut stream, _) = listener.accept().await.map_err(|e| {
+        BosuaError::Command(format!("Failed to accept connection: {}", e))
+    })?;
+
+    let mut buf = vec![0u8; 4096];
+    let n = stream.read(&mut buf).await.map_err(|e| {
+        BosuaError::Command(format!("Failed to read request: {}", e))
+    })?;
+    let request = String::from_utf8_lossy(&buf[..n]);
+
+    // Extract code from GET /?code=...&...
+    let code = extract_code_from_request(&request)
+        .ok_or_else(|| BosuaError::Command("No authorization code received".into()))?;
+
+    // Send success response
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
+        <html><head><title>Authorization Complete</title></head>\
+        <body><h1>Authorization Complete</h1>\
+        <p>You can close this window and return to the terminal.</p>\
+        </body></html>";
+    let _ = stream.write_all(response.as_bytes()).await;
+
+    // Exchange code for token
+    let http = reqwest::Client::new();
+    let resp = http
+        .post("https://oauth2.googleapis.com/token")
+        .form(&[
+            ("code", code.as_str()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("redirect_uri", redirect_uri),
+            ("grant_type", "authorization_code"),
+        ])
+        .send()
+        .await
+        .map_err(|e| BosuaError::Command(format!("Token exchange failed: {}", e)))?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(BosuaError::Command(format!("Token exchange failed: {}", body)));
+    }
+
+    let token: serde_json::Value = resp.json().await.map_err(|e| {
+        BosuaError::Command(format!("Failed to parse token response: {}", e))
+    })?;
+
+    Ok(token)
+}
+
+/// Extract the `code` query parameter from an HTTP request line.
+/// Parses `GET /?code=XXX&state=YYY HTTP/1.1` style requests.
+fn extract_code_from_request(request: &str) -> Option<String> {
+    let first_line = request.lines().next()?;
+    let path = first_line.split_whitespace().nth(1)?;
+    let query_start = path.find('?')? + 1;
+    let query = &path[query_start..];
+    for pair in query.split('&') {
+        if let Some(value) = pair.strip_prefix("code=") {
+            // URL-decode the value (replace %XX sequences)
+            return Some(percent_decode(value));
+        }
+    }
+    None
+}
+
+/// Simple percent-decoding for URL query values.
+fn percent_decode(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let hex: String = chars.by_ref().take(2).collect();
+            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                result.push(byte as char);
+            } else {
+                result.push('%');
+                result.push_str(&hex);
+            }
+        } else if c == '+' {
+            result.push(' ');
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 async fn handle_account(matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
     match matches.subcommand() {
         Some(("list", sub)) => {
@@ -804,26 +998,48 @@ async fn handle_account(matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<
             Ok(())
         }
         Some(("add", _)) => {
-            // Create a new account directory and prompt for OAuth
-            println!("To add a new GDrive account:");
-            println!("  1. Choose an account name (e.g., your email)");
-            println!("  2. Run: bosua gdrive oauth2 login");
-            println!("  3. Complete the OAuth flow in your browser");
-            print!("Account name: ");
             use std::io::Write;
+
+            // 1. Prompt for account name
+            print!("Enter account name: ");
             std::io::stdout().flush().ok();
             let mut name = String::new();
             std::io::stdin().read_line(&mut name).map_err(|e| {
                 BosuaError::Command(format!("Failed to read input: {}", e))
             })?;
-            let name = name.trim();
+            let name = name.trim().to_string();
             if name.is_empty() {
                 return Err(BosuaError::Command("Account name cannot be empty".into()));
             }
-            let account_dir = gdrive_base_path().join(name);
+
+            // 2. Resolve OAuth2 credentials (priority: current oauth2 cred > env vars > prompt)
+            let (client_id, client_secret) = resolve_oauth2_credentials()?;
+
+            // 3. Perform OAuth2 authorization flow
+            let token = authorize_user(&client_id, &client_secret).await?;
+
+            // 4. Create account directory
+            let account_dir = gdrive_base_path().join(&name);
             std::fs::create_dir_all(&account_dir).map_err(BosuaError::Io)?;
-            save_current_gdrive_account(name)?;
-            output::success(&format!("Account '{}' created. Run `bosua gdrive oauth2 login` to authenticate.", name));
+
+            // 5. Save secret.json
+            let secret = serde_json::json!({
+                "client_id": client_id,
+                "client_secret": client_secret,
+            });
+            let secret_data = serde_json::to_string_pretty(&secret)
+                .map_err(|e| BosuaError::Application(format!("JSON error: {e}")))?;
+            std::fs::write(account_dir.join("secret.json"), secret_data).map_err(BosuaError::Io)?;
+
+            // 6. Save tokens.json
+            let token_data = serde_json::to_string_pretty(&token)
+                .map_err(|e| BosuaError::Application(format!("JSON error: {e}")))?;
+            std::fs::write(account_dir.join("tokens.json"), token_data).map_err(BosuaError::Io)?;
+
+            // 7. Set as current account
+            save_current_gdrive_account(&name)?;
+
+            output::success(&format!("Account '{}' added successfully", name));
             Ok(())
         }
         Some(("import", sub)) => {
