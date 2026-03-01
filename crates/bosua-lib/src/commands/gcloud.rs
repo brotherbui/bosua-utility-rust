@@ -14,7 +14,7 @@ use crate::utils::run_external_tool;
 pub fn gcloud_command() -> Command {
     Command::new("gcloud")
         .aliases(["gc"])
-        .about("Google Cloud CLI")
+        .about("Manage your Google Gcloud Services")
         .subcommand_required(true)
         .arg_required_else_help(true)
         // Persistent flags matching Go
@@ -152,33 +152,36 @@ fn firewall_subcommand() -> Command {
 
 fn region_subcommand() -> Command {
     Command::new("region")
-        .about("Region operations")
-        .subcommand(Command::new("list").about("List available regions"))
+        .about("Manage GCP Regions")
+        .aliases(["r", "regions"])
+        .subcommand(Command::new("list").about("List available GCP regions (optionally filter by search term)"))
         .subcommand(
-            Command::new("set")
-                .about("Set the default region")
+            Command::new("info")
+                .about("Show detailed information about a specific GCP region")
                 .arg(Arg::new("region").required(true).help("Region name")),
         )
 }
 
 fn zone_subcommand() -> Command {
     Command::new("zone")
-        .about("Zone operations")
-        .subcommand(Command::new("list").about("List available zones"))
+        .about("Manage GCP Availability Zones")
+        .aliases(["z", "zones", "az"])
+        .subcommand(Command::new("list").about("List available GCP availability zones"))
         .subcommand(
-            Command::new("set")
-                .about("Set the default zone")
+            Command::new("info")
+                .about("Show detailed information about a specific GCP availability zone")
                 .arg(Arg::new("zone").required(true).help("Zone name")),
         )
 }
 
 fn ami_subcommand() -> Command {
     Command::new("ami")
-        .about("Machine image operations")
-        .subcommand(Command::new("list").about("List available machine images"))
+        .about("Manage GCP Images")
+        .aliases(["image", "img"])
+        .subcommand(Command::new("list").about("List GCP images"))
         .subcommand(
-            Command::new("describe")
-                .about("Describe a machine image")
+            Command::new("info")
+                .about("Get detailed information about a GCP image")
                 .arg(Arg::new("image").required(true).help("Image name or ID")),
         )
 }

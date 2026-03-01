@@ -13,7 +13,8 @@ use crate::utils::run_external_tool;
 /// Build the `latex2typst` clap command.
 pub fn latex2typst_command() -> Command {
     Command::new("latex2typst")
-        .about("LaTeX to Typst conversion")
+        .about("Convert LaTeX files to Typst format")
+        .aliases(["tex2typ", "tex2typst"])
         .arg(
             Arg::new("input")
                 .required(true)

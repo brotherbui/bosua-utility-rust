@@ -73,7 +73,7 @@ pub fn register_macos_commands(registry: &mut CommandRegistry) {
         .register(
             CommandBuilder::new("cert")
                 .category(CommandCategory::Network)
-                .description("Print certificate chains of domain")
+                .description("Print all certificate chains of domain")
                 .build(),
         )
         .expect("failed to register cert command");
@@ -81,7 +81,7 @@ pub fn register_macos_commands(registry: &mut CommandRegistry) {
         .register(
             CommandBuilder::new("obf")
                 .category(CommandCategory::Utility)
-                .description("Obfuscate text input for security")
+                .description("Obfuscate input")
                 .build(),
         )
         .expect("failed to register obf command");

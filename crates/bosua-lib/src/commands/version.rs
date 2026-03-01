@@ -9,7 +9,8 @@ use crate::cli::{CommandBuilder, CommandCategory, CommandMeta};
 /// Build the `version` clap command.
 pub fn version_command() -> Command {
     Command::new("version")
-        .about("Display application version")
+        .about("Show version and build information")
+        .aliases(["v"])
         .arg(
             Arg::new("json")
                 .long("json")
