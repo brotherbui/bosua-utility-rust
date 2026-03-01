@@ -64,6 +64,23 @@ pub fn format_duration(seconds: u64) -> String {
     }
     parts.join(" ")
 }
+/// Deobfuscate a string by picking characters at the given byte indices.
+///
+/// Matches Go's `utils.Deobfs()` — extracts characters from `input` at each
+/// position in `indices` and concatenates them.
+pub fn deobfs(input: &str, indices: &[usize]) -> String {
+    let bytes = input.as_bytes();
+    indices
+        .iter()
+        .filter_map(|&i| {
+            if i < bytes.len() {
+                Some(bytes[i] as char)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -206,5 +223,22 @@ mod tests {
     #[test]
     fn format_duration_hours_and_seconds_no_minutes() {
         assert_eq!(format_duration(3601), "1h 1s");
+    }
+
+    // --- deobfs ---
+
+    #[test]
+    fn deobfs_basic() {
+        assert_eq!(deobfs("hello world", &[0, 6]), "hw");
+    }
+
+    #[test]
+    fn deobfs_empty_indices() {
+        assert_eq!(deobfs("hello", &[]), "");
+    }
+
+    #[test]
+    fn deobfs_out_of_bounds_skipped() {
+        assert_eq!(deobfs("abc", &[0, 100, 2]), "ac");
     }
 }
