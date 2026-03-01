@@ -24,8 +24,8 @@ impl SignalHandler {
 
     /// Listens for SIGINT or SIGTERM and cancels the token when received.
     ///
-    /// This method blocks until a signal arrives, then cancels the token
-    /// so all holders can begin graceful shutdown.
+    /// On the first signal, cancels the token for graceful shutdown.
+    /// On the second signal, forces immediate process exit.
     pub async fn listen(&self) {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -36,6 +36,18 @@ impl SignalHandler {
             }
         }
         self.token.cancel();
+
+        // Wait for a second signal → force exit
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received second SIGINT, forcing exit");
+                std::process::exit(130);
+            }
+            _ = Self::sigterm() => {
+                tracing::info!("Received second SIGTERM, forcing exit");
+                std::process::exit(143);
+            }
+        }
     }
 
     #[cfg(unix)]

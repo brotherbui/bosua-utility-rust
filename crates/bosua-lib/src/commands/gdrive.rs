@@ -820,9 +820,16 @@ async fn authorize_user(
         BosuaError::Command(format!("Failed to start callback server on :8085: {}", e))
     })?;
 
-    let (mut stream, _) = listener.accept().await.map_err(|e| {
-        BosuaError::Command(format!("Failed to accept connection: {}", e))
-    })?;
+    let (mut stream, _) = tokio::select! {
+        result = listener.accept() => {
+            result.map_err(|e| {
+                BosuaError::Command(format!("Failed to accept connection: {}", e))
+            })?
+        }
+        _ = tokio::signal::ctrl_c() => {
+            return Err(BosuaError::Command("Interrupted".into()));
+        }
+    };
 
     let mut buf = vec![0u8; 4096];
     let n = stream.read(&mut buf).await.map_err(|e| {
