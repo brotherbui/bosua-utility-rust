@@ -60,7 +60,36 @@ pub async fn handle_bitcoin(matches: &ArgMatches, http: &HttpClient) -> Result<(
             Ok(())
         }
         Some(("signet", _)) => {
-            super::delegate_to_go(&["bitcoin", "signet"]).await
+            // Try to get a new address from bitcoin-cli, then request signet coins
+            let address_output = tokio::process::Command::new("bitcoin-cli")
+                .args(["-conf=bitcoin-signet.conf", "getnewaddress"])
+                .output()
+                .await;
+            let address = match address_output {
+                Ok(o) if o.status.success() => {
+                    String::from_utf8_lossy(&o.stdout).trim().to_string()
+                }
+                _ => {
+                    println!("bitcoin-cli not found or failed. Provide an address as argument.");
+                    return Ok(());
+                }
+            };
+            println!("New address: {}", address);
+            let client = http.get_client().await;
+            let url = format!("https://signetfaucet.bublina.eu.org/claim/?address={}", address);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    if body.contains("payment sent") {
+                        println!("{}", body);
+                        println!("Done {}", address);
+                    } else {
+                        println!("Faucet response: {}", body);
+                    }
+                }
+                Err(e) => println!("Cannot process: {}", e),
+            }
+            Ok(())
         }
         _ => unreachable!("subcommand_required is set"),
     }

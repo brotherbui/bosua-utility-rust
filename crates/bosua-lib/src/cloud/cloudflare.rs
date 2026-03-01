@@ -257,6 +257,154 @@ impl CloudflareClient {
         Ok(())
     }
 
+    /// Get a single DNS record by ID.
+    pub async fn get_dns_record(&self, record_id: &str) -> Result<DnsRecord> {
+        let zone_id = self.require_zone_id()?;
+        let url = format!("{CF_API_BASE}/zones/{zone_id}/dns_records/{record_id}");
+        let client = self.http.get_client().await;
+        let resp = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_token))
+            .send()
+            .await
+            .map_err(BosuaError::Http)?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(BosuaError::Cloud {
+                service: "cloudflare".into(),
+                message: format!("get_dns_record failed ({status}): {text}"),
+            });
+        }
+        let api_resp: CfApiResponse<DnsRecord> = resp.json().await.map_err(BosuaError::Http)?;
+        api_resp.result.ok_or_else(|| BosuaError::Cloud {
+            service: "cloudflare".into(),
+            message: "No record returned".into(),
+        })
+    }
+
+    /// Update a DNS record by ID. Only non-None fields are sent.
+    pub async fn update_dns_record(
+        &self,
+        record_id: &str,
+        record_type: Option<&str>,
+        name: Option<&str>,
+        content: Option<&str>,
+        ttl: Option<u32>,
+        proxied: Option<bool>,
+    ) -> Result<DnsRecord> {
+        let zone_id = self.require_zone_id()?;
+        let url = format!("{CF_API_BASE}/zones/{zone_id}/dns_records/{record_id}");
+        let client = self.http.get_client().await;
+        let mut body = serde_json::Map::new();
+        if let Some(t) = record_type { body.insert("type".into(), serde_json::json!(t)); }
+        if let Some(n) = name { body.insert("name".into(), serde_json::json!(n)); }
+        if let Some(c) = content { body.insert("content".into(), serde_json::json!(c)); }
+        if let Some(t) = ttl { body.insert("ttl".into(), serde_json::json!(t)); }
+        if let Some(p) = proxied { body.insert("proxied".into(), serde_json::json!(p)); }
+        let resp = client
+            .patch(&url)
+            .header("Authorization", format!("Bearer {}", self.api_token))
+            .json(&serde_json::Value::Object(body))
+            .send()
+            .await
+            .map_err(BosuaError::Http)?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(BosuaError::Cloud {
+                service: "cloudflare".into(),
+                message: format!("update_dns_record failed ({status}): {text}"),
+            });
+        }
+        let api_resp: CfApiResponse<DnsRecord> = resp.json().await.map_err(BosuaError::Http)?;
+        api_resp.result.ok_or_else(|| BosuaError::Cloud {
+            service: "cloudflare".into(),
+            message: "No record returned".into(),
+        })
+    }
+
+    /// Add a zone (domain) to Cloudflare.
+    pub async fn add_zone(&self, domain: &str, account_id: &str) -> Result<CfZone> {
+        let url = format!("{CF_API_BASE}/zones");
+        let client = self.http.get_client().await;
+        let body = serde_json::json!({
+            "name": domain,
+            "account": { "id": account_id },
+        });
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_token))
+            .json(&body)
+            .send()
+            .await
+            .map_err(BosuaError::Http)?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(BosuaError::Cloud {
+                service: "cloudflare".into(),
+                message: format!("add_zone failed ({status}): {text}"),
+            });
+        }
+        let api_resp: CfApiResponse<CfZone> = resp.json().await.map_err(BosuaError::Http)?;
+        api_resp.result.ok_or_else(|| BosuaError::Cloud {
+            service: "cloudflare".into(),
+            message: "No zone returned".into(),
+        })
+    }
+
+    /// Get zone details by name (searches zones list).
+    pub async fn get_zone(&self, domain: &str) -> Result<CfZone> {
+        let zones = self.list_zones().await?;
+        zones.into_iter().find(|z| z.name == domain).ok_or_else(|| BosuaError::Cloud {
+            service: "cloudflare".into(),
+            message: format!("Zone '{}' not found", domain),
+        })
+    }
+
+    /// Delete a zone by ID.
+    pub async fn delete_zone(&self, zone_id: &str) -> Result<()> {
+        let url = format!("{CF_API_BASE}/zones/{zone_id}");
+        let client = self.http.get_client().await;
+        let resp = client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.api_token))
+            .send()
+            .await
+            .map_err(BosuaError::Http)?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(BosuaError::Cloud {
+                service: "cloudflare".into(),
+                message: format!("delete_zone failed ({status}): {text}"),
+            });
+        }
+        Ok(())
+    }
+
+    /// Delete a tunnel by ID.
+    pub async fn delete_tunnel(&self, account_id: &str, tunnel_id: &str) -> Result<()> {
+        let url = format!("{CF_API_BASE}/accounts/{account_id}/cfd_tunnel/{tunnel_id}");
+        let client = self.http.get_client().await;
+        let resp = client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.api_token))
+            .send()
+            .await
+            .map_err(BosuaError::Http)?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(BosuaError::Cloud {
+                service: "cloudflare".into(),
+                message: format!("delete_tunnel failed ({status}): {text}"),
+            });
+        }
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Tunnel management
     // -----------------------------------------------------------------------

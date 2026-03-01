@@ -83,69 +83,180 @@ pub fn cloud_meta() -> CommandMeta {
 /// Handle the `cloud` command dispatch.
 ///
 /// All cloud subcommands involve SSH connections and remote server management.
-/// They delegate to the Go binary which has the full SSH/remote infrastructure.
+/// Uses the system `ssh` command for remote operations.
 pub fn handle_cloud(matches: &ArgMatches) {
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
-        println!("cloud commands require the Go binary at /opt/homebrew/bin/bosua (SSH/remote infrastructure not yet ported)");
-        return;
-    }
+    let ip = resolve_server_ip(matches);
 
-    let mut args = vec!["cloud".to_string()];
-
-    // Forward persistent flags
-    if matches.get_flag("backend") { args.push("--backend".to_string()); }
-    if matches.get_flag("gcp") { args.push("--gcp".to_string()); }
-    if let Some(ip) = matches.get_one::<String>("ip") {
-        args.push(format!("--ip={}", ip));
-    }
-
-    // Forward subcommand
     match matches.subcommand() {
         Some(("config", sub)) => {
-            args.push("config".to_string());
-            if let Some((name, _)) = sub.subcommand() {
-                args.push(name.to_string());
+            match sub.subcommand() {
+                Some(("caddy", _)) => {
+                    run_ssh_command(&ip, "sudo caddy reload --config /etc/caddy/Caddyfile");
+                }
+                _ => println!("cloud config: use a subcommand (caddy)"),
             }
         }
         Some(("daemon", sub)) => {
-            args.push("daemon".to_string());
-            if let Some((name, _)) = sub.subcommand() {
-                args.push(name.to_string());
-            }
+            let action = match sub.subcommand() {
+                Some(("logs", _)) => "journalctl -u bosua -f --no-pager -n 100",
+                Some(("restart", _)) => "sudo systemctl restart bosua",
+                Some(("start", _)) => "sudo systemctl start bosua",
+                Some(("status", _)) => "sudo systemctl status bosua",
+                Some(("stop", _)) => "sudo systemctl stop bosua",
+                _ => { println!("cloud daemon: use a subcommand (logs, restart, start, status, stop)"); return; }
+            };
+            run_ssh_command(&ip, action);
         }
         Some(("gdrive", sub)) => {
-            args.push("gdrive".to_string());
-            if let Some((name, _)) = sub.subcommand() {
-                args.push(name.to_string());
+            match sub.subcommand() {
+                Some(("import", _)) => {
+                    // rsync gdrive config to remote
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                    let local_path = format!("{}/.config/gdrive3/", home);
+                    let remote_path = format!("root@{}:~/.config/gdrive3/", ip);
+                    let _ = std::process::Command::new("rsync")
+                        .args(["-avz", &local_path, &remote_path])
+                        .stdin(std::process::Stdio::inherit())
+                        .stdout(std::process::Stdio::inherit())
+                        .stderr(std::process::Stdio::inherit())
+                        .status();
+                    println!("GDrive config synced to {}", ip);
+                }
+                _ => println!("cloud gdrive: use a subcommand (import)"),
             }
         }
         Some(("service", sub)) => {
-            args.push("service".to_string());
-            if let Some((name, _)) = sub.subcommand() {
-                args.push(name.to_string());
+            let (action, _) = sub.subcommand().unwrap_or(("status", sub));
+            let cmd = match action {
+                "restart" => "sudo systemctl restart",
+                "start" => "sudo systemctl start",
+                "status" => "sudo systemctl status",
+                "stop" => "sudo systemctl stop",
+                _ => { println!("cloud service: use a subcommand (restart, start, status, stop)"); return; }
+            };
+            // List common services
+            let services = ["caddy", "bosua", "aria2", "cloudflared"];
+            for svc in &services {
+                run_ssh_command(&ip, &format!("{} {}", cmd, svc));
             }
         }
         Some(("setup", sub)) => {
-            args.push("setup".to_string());
-            if let Some((name, _)) = sub.subcommand() {
-                args.push(name.to_string());
+            let subcmd = match sub.subcommand() {
+                Some((name, _)) => name,
+                None => { println!("cloud setup: use a subcommand"); return; }
+            };
+            match subcmd {
+                "check-env" => {
+                    println!("Checking server connectivity...");
+                    run_ssh_command(&ip, "uname -a && uptime && df -h / && free -h");
+                }
+                "deploy" => {
+                    println!("Building and deploying to {}...", ip);
+                    // Build linux binary
+                    let _ = std::process::Command::new("cargo")
+                        .args(["build", "--release", "--target", "x86_64-unknown-linux-gnu"])
+                        .stdin(std::process::Stdio::inherit())
+                        .stdout(std::process::Stdio::inherit())
+                        .stderr(std::process::Stdio::inherit())
+                        .status();
+                    // Deploy via scp
+                    let _ = std::process::Command::new("scp")
+                        .args(["target/x86_64-unknown-linux-gnu/release/bosua-linux", &format!("root@{}:/usr/local/bin/bosua", ip)])
+                        .stdin(std::process::Stdio::inherit())
+                        .stdout(std::process::Stdio::inherit())
+                        .stderr(std::process::Stdio::inherit())
+                        .status();
+                    run_ssh_command(&ip, "sudo systemctl restart bosua");
+                }
+                "full" => {
+                    println!("Running full setup on {}...", ip);
+                    run_ssh_command(&ip, "apt update && apt upgrade -y");
+                }
+                _ => {
+                    // For specific setup commands, run the appropriate install script
+                    let install_cmd = match subcmd {
+                        "aria2" => "apt install -y aria2 && systemctl enable aria2",
+                        "caddy" => "apt install -y debian-keyring debian-archive-keyring apt-transport-https && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && apt update && apt install -y caddy",
+                        "cloudflared" => "curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && dpkg -i cloudflared.deb && rm cloudflared.deb",
+                        "dante" => "apt install -y dante-server",
+                        "microsocks" => "apt install -y microsocks",
+                        "tailscale" => "curl -fsSL https://tailscale.com/install.sh | sh",
+                        "latex" => "apt install -y texlive-full",
+                        _ => { println!("cloud setup {}: running on remote...", subcmd); "" }
+                    };
+                    if !install_cmd.is_empty() {
+                        run_ssh_command(&ip, install_cmd);
+                    }
+                }
             }
         }
-        Some(("stats", _sub)) => {
-            args.push("stats".to_string());
+        Some(("stats", sub)) => {
+            let target_ip = if sub.get_flag("gcp") {
+                // Use GCP IP if --gcp flag
+                resolve_server_ip_with_flag(true, false, None)
+            } else {
+                ip.clone()
+            };
+            run_ssh_command(&target_ip, "echo '=== CPU ===' && nproc && echo '=== Memory ===' && free -h && echo '=== Disk ===' && df -h / && echo '=== Uptime ===' && uptime");
         }
         Some(("sync", sub)) => {
-            args.push("sync".to_string());
-            if let Some((name, _)) = sub.subcommand() {
-                args.push(name.to_string());
+            match sub.subcommand() {
+                Some(("kodi-repo", _)) => {
+                    println!("Syncing Kodi repo to {}...", ip);
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                    let _ = std::process::Command::new("rsync")
+                        .args(["-avz", &format!("{}/kodi-repo/", home), &format!("root@{}:/var/www/kodi-repo/", ip)])
+                        .stdin(std::process::Stdio::inherit())
+                        .stdout(std::process::Stdio::inherit())
+                        .stderr(std::process::Stdio::inherit())
+                        .status();
+                }
+                _ => println!("cloud sync: use a subcommand (kodi-repo)"),
             }
         }
         _ => unreachable!("subcommand_required is set"),
     }
+}
 
-    let _ = std::process::Command::new(go_bin)
-        .args(&args)
+fn resolve_server_ip(matches: &ArgMatches) -> String {
+    if let Some(ip) = matches.get_one::<String>("ip") {
+        return ip.clone();
+    }
+    let backend = matches.get_flag("backend");
+    let gcp = matches.get_flag("gcp");
+    resolve_server_ip_with_flag(gcp, backend, None)
+}
+
+fn resolve_server_ip_with_flag(gcp: bool, backend: bool, explicit_ip: Option<&str>) -> String {
+    if let Some(ip) = explicit_ip {
+        return ip.to_string();
+    }
+    // Read from config file
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let config_path = format!("{}/.bosua/config.json", home);
+    if let Ok(data) = std::fs::read_to_string(&config_path) {
+        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&data) {
+            if gcp {
+                if let Some(ip) = config.get("gcpIp").and_then(|v| v.as_str()) {
+                    return ip.to_string();
+                }
+            }
+            if backend {
+                if let Some(ip) = config.get("backendIp").and_then(|v| v.as_str()) {
+                    return ip.to_string();
+                }
+            }
+            if let Some(ip) = config.get("serverIp").and_then(|v| v.as_str()) {
+                return ip.to_string();
+            }
+        }
+    }
+    "localhost".to_string()
+}
+
+fn run_ssh_command(ip: &str, command: &str) {
+    let _ = std::process::Command::new("ssh")
+        .args([&format!("root@{}", ip), command])
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())

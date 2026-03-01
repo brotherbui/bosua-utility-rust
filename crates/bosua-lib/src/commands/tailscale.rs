@@ -6,6 +6,7 @@
 
 use clap::{Arg, ArgMatches, Command};
 
+use crate::cloud::account_manager::AccountManager;
 use crate::cli::{CommandBuilder, CommandCategory, CommandMeta};
 use crate::cloud::tailscale::TailscaleClient;
 use crate::errors::Result;
@@ -277,71 +278,54 @@ fn acl_subcommand() -> Command {
 // Wired handlers
 // ---------------------------------------------------------------------------
 
-/// Helper to delegate a tailscale subcommand to the Go binary.
-async fn delegate_tailscale(args: &[&str]) -> Result<()> {
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
-        return Err(crate::errors::BosuaError::Command(format!(
-            "tailscale {} requires the Go binary at /opt/homebrew/bin/bosua",
-            args.join(" ")
-        )));
+/// Helper to resolve a hostname to a device ID by listing devices.
+async fn resolve_device_id(ts: &TailscaleClient, hostname_or_id: &str) -> Result<String> {
+    // If it looks like a numeric ID, use it directly
+    if hostname_or_id.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(hostname_or_id.to_string());
     }
-    let mut full_args = vec!["tailscale"];
-    full_args.extend_from_slice(args);
-    let status = tokio::process::Command::new(go_bin)
-        .args(&full_args)
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .await
-        .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-    if !status.success() {
-        return Err(crate::errors::BosuaError::Command(format!(
-            "tailscale {} failed",
-            args.join(" ")
-        )));
+    // Otherwise search by hostname
+    let devices = ts.list_devices().await?;
+    for d in &devices {
+        if d.hostname == hostname_or_id || d.name == hostname_or_id || d.id == hostname_or_id {
+            return Ok(d.id.clone());
+        }
     }
-    Ok(())
+    Err(crate::errors::BosuaError::Command(format!(
+        "Device '{}' not found. Use `tailscale list` to see available devices.",
+        hostname_or_id
+    )))
 }
 
 fn handle_account(matches: &ArgMatches) -> Result<()> {
+    let mgr = AccountManager::new("tailscale")?;
     match matches.subcommand() {
-        Some(("add", _)) => {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(delegate_tailscale(&["account", "add"]))
-        }
-        Some(("list", _)) => {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(delegate_tailscale(&["account", "list"]))
-        }
-        Some(("current", _)) => {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(delegate_tailscale(&["account", "current"]))
-        }
-        Some(("info", _)) => {
-            println!("Tailscale account info: use `tailscale acl get` or `tailscale list` to check configuration");
-            Ok(())
+        Some(("add", _)) => mgr.add_account_interactive(&[
+            ("Client ID", false),
+            ("Client Secret", true),
+            ("Tailnet", false),
+        ]),
+        Some(("list", _)) => mgr.print_list(),
+        Some(("current", _)) => mgr.print_current(),
+        Some(("info", sub)) => {
+            let name = sub.get_one::<String>("account_name").map(|s| s.as_str());
+            mgr.show_info(name)
         }
         Some(("switch", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(delegate_tailscale(&["account", "switch", name]))
+            mgr.switch_account(name)
         }
         Some(("remove", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(delegate_tailscale(&["account", "remove", name]))
+            mgr.remove_account_interactive(name)
         }
         Some(("export", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(delegate_tailscale(&["account", "export", name]))
+            mgr.export_account(name)
         }
         Some(("import", sub)) => {
             let path = sub.get_one::<String>("json_file").unwrap();
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(delegate_tailscale(&["account", "import", path]))
+            mgr.import_account(path)
         }
         _ => {
             println!("tailscale account: use a subcommand (add, list, current, info, switch, remove, export, import)");
@@ -385,40 +369,61 @@ async fn handle_info(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
     Ok(())
 }
 
-async fn handle_approve(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
-    let id = matches.get_one::<String>("hostname_or_id").unwrap();
+async fn handle_approve(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
+    let hostname = matches.get_one::<String>("hostname_or_id").unwrap();
     let exit_node = matches.get_flag("exit-node");
-    let mut args = vec!["approve", id.as_str()];
-    if exit_node { args.push("--exit-node"); }
-    delegate_tailscale(&args).await
+    let device_id = resolve_device_id(ts, hostname).await?;
+    ts.authorize_device(&device_id).await?;
+    println!("Device {} approved", hostname);
+    if exit_node {
+        ts.approve_exit_node(&device_id).await?;
+        println!("Device {} enabled as exit node", hostname);
+    }
+    Ok(())
 }
 
-async fn handle_deauthorize(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
-    let id = matches.get_one::<String>("hostname_or_id").unwrap();
-    delegate_tailscale(&["deauthorize", id]).await
+async fn handle_deauthorize(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
+    let hostname = matches.get_one::<String>("hostname_or_id").unwrap();
+    let device_id = resolve_device_id(ts, hostname).await?;
+    ts.deauthorize_device(&device_id).await?;
+    println!("Device {} deauthorized", hostname);
+    Ok(())
 }
 
-async fn handle_set_name(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
-    let id = matches.get_one::<String>("hostname_or_id").unwrap();
+async fn handle_set_name(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
+    let hostname = matches.get_one::<String>("hostname_or_id").unwrap();
     let name = matches.get_one::<String>("new_name").unwrap();
-    delegate_tailscale(&["set-name", id, name]).await
+    let device_id = resolve_device_id(ts, hostname).await?;
+    ts.set_device_name(&device_id, name).await?;
+    println!("Device {} renamed to '{}'", hostname, name);
+    Ok(())
 }
 
-async fn handle_set_tags(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
-    let id = matches.get_one::<String>("hostname_or_id").unwrap();
-    let tags = matches.get_one::<String>("tags").unwrap();
-    delegate_tailscale(&["set-tags", id, tags]).await
+async fn handle_set_tags(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
+    let hostname = matches.get_one::<String>("hostname_or_id").unwrap();
+    let tags_str = matches.get_one::<String>("tags").unwrap();
+    let tags: Vec<String> = tags_str.split(',').map(|s| s.trim().to_string()).collect();
+    let device_id = resolve_device_id(ts, hostname).await?;
+    ts.set_device_tags(&device_id, &tags).await?;
+    println!("Tags updated for device {}: {}", hostname, tags_str);
+    Ok(())
 }
 
-async fn handle_disable_key_expiry(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
-    let id = matches.get_one::<String>("hostname_or_id").unwrap();
-    delegate_tailscale(&["disable-key-expiry", id]).await
+async fn handle_disable_key_expiry(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
+    let hostname = matches.get_one::<String>("hostname_or_id").unwrap();
+    let device_id = resolve_device_id(ts, hostname).await?;
+    ts.disable_key_expiry(&device_id).await?;
+    println!("Key expiry disabled for device {}", hostname);
+    Ok(())
 }
 
-async fn handle_set_ipv4(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
-    let id = matches.get_one::<String>("hostname_or_id").unwrap();
+async fn handle_set_ipv4(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
+    let hostname = matches.get_one::<String>("hostname_or_id").unwrap();
     let ip = matches.get_one::<String>("ipv4_address").unwrap();
-    delegate_tailscale(&["set-ipv4", id, ip]).await
+    let device_id = resolve_device_id(ts, hostname).await?;
+    ts.set_device_ipv4(&device_id, ip).await?;
+    println!("IPv4 address set to {} for device {}", ip, hostname);
+    Ok(())
 }
 
 async fn handle_delete(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
@@ -428,16 +433,21 @@ async fn handle_delete(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()>
     Ok(())
 }
 
-async fn handle_key_generate(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
+async fn handle_key_generate(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
     let reusable = matches.get_flag("reusable");
     let ephemeral = matches.get_flag("ephemeral");
-    let tags = matches.get_one::<String>("tags").unwrap();
-    let mut args = vec!["key-generate".to_string()];
-    if reusable { args.push("--reusable".to_string()); }
-    if ephemeral { args.push("--ephemeral".to_string()); }
-    args.push(format!("--tags={}", tags));
-    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    delegate_tailscale(&refs).await
+    let tags_str = matches.get_one::<String>("tags").unwrap();
+    let expiry_days = *matches.get_one::<u32>("expiry-days").unwrap();
+    let tags: Vec<String> = tags_str.split(',').map(|s| s.trim().to_string()).collect();
+    let expiry_seconds = (expiry_days as u64) * 86400;
+    let key = ts.create_auth_key(reusable, ephemeral, &tags, expiry_seconds).await?;
+    println!("Auth key created:");
+    println!("  Key:     {}", key.key);
+    println!("  ID:      {}", key.id);
+    if let Some(ref expires) = key.expires_at {
+        println!("  Expires: {}", expires);
+    }
+    Ok(())
 }
 
 async fn handle_routes(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
@@ -449,19 +459,39 @@ async fn handle_routes(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()>
     Ok(())
 }
 
-async fn handle_exit_node(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
+async fn handle_exit_node(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
     match matches.subcommand() {
         Some(("approve", sub)) => {
-            let id = sub.get_one::<String>("hostname_or_id").unwrap();
-            delegate_tailscale(&["exit-node", "approve", id]).await
+            let hostname = sub.get_one::<String>("hostname_or_id").unwrap();
+            let device_id = resolve_device_id(ts, hostname).await?;
+            ts.approve_exit_node(&device_id).await?;
+            println!("Device {} approved as exit node", hostname);
+            Ok(())
         }
         Some(("unapprove", sub)) => {
-            let id = sub.get_one::<String>("hostname_or_id").unwrap();
-            delegate_tailscale(&["exit-node", "unapprove", id]).await
+            let hostname = sub.get_one::<String>("hostname_or_id").unwrap();
+            let device_id = resolve_device_id(ts, hostname).await?;
+            // Disable exit node by setting empty routes
+            ts.set_device_routes(&device_id, &[]).await?;
+            println!("Exit node approval removed for device {}", hostname);
+            Ok(())
         }
         Some(("status", sub)) => {
-            let id = sub.get_one::<String>("hostname_or_id").unwrap();
-            delegate_tailscale(&["exit-node", "status", id]).await
+            let hostname = sub.get_one::<String>("hostname_or_id").unwrap();
+            let device_id = resolve_device_id(ts, hostname).await?;
+            let routes = ts.get_device_routes(&device_id).await?;
+            let exit_routes: Vec<&crate::cloud::tailscale::TsRoute> = routes.iter()
+                .filter(|r| r.prefix == "0.0.0.0/0" || r.prefix == "::/0")
+                .collect();
+            if exit_routes.is_empty() {
+                println!("Device {} is NOT an exit node", hostname);
+            } else {
+                println!("Device {} exit node status:", hostname);
+                for r in &exit_routes {
+                    println!("  {} - advertised: {}, enabled: {}", r.prefix, r.advertised, r.enabled);
+                }
+            }
+            Ok(())
         }
         _ => {
             println!("tailscale exit-node: use a subcommand (approve, unapprove, status)");
@@ -505,8 +535,36 @@ async fn handle_acl(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
             });
             Ok(())
         }
+        Some(("edit", _)) => {
+            // Get current ACL, write to temp file, open in editor
+            let policy = ts.get_acl().await?;
+            let content = serde_json::to_string_pretty(&policy)?;
+            let tmp_path = std::env::temp_dir().join("tailscale-acl.json");
+            std::fs::write(&tmp_path, &content).map_err(|e| {
+                crate::errors::BosuaError::Command(format!("Failed to write temp ACL file: {}", e))
+            })?;
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+            let status = std::process::Command::new(&editor)
+                .arg(&tmp_path)
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to open editor: {}", e)))?;
+            if status.success() {
+                let edited = std::fs::read_to_string(&tmp_path).map_err(|e| {
+                    crate::errors::BosuaError::Command(format!("Failed to read edited ACL: {}", e))
+                })?;
+                let new_policy: crate::cloud::tailscale::TsAclPolicy = serde_json::from_str(&edited)?;
+                ts.set_acl(&new_policy).await?;
+                println!("ACL policy updated");
+            }
+            let _ = std::fs::remove_file(&tmp_path);
+            Ok(())
+        }
         Some((cmd, _)) => {
-            delegate_tailscale(&["acl", cmd]).await
+            println!("tailscale acl {}: not yet implemented natively. Use the Tailscale admin console.", cmd);
+            Ok(())
         }
         _ => {
             println!("tailscale acl: use a subcommand (get, set, edit, interactive, commit, draft, validate, test)");

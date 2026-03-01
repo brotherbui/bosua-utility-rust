@@ -26,31 +26,79 @@ pub fn araxis_meta() -> CommandMeta {
 
 /// Handle the `araxis` command.
 ///
-/// Delegates to Go binary which has testmail integration and AppleScript
-/// automation for Araxis registration.
+/// Registers Araxis Merge using testmail.app API for email verification
+/// and AppleScript for clipboard/browser automation.
 pub async fn handle_araxis(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("register", _)) => {
-            // Delegate to Go binary which has testmail + clipboard + AppleScript integration
-            let go_bin = "/opt/homebrew/bin/bosua";
-            if !std::path::Path::new(go_bin).exists() {
-                return Err(crate::errors::BosuaError::Command(
-                    "Araxis register requires the Go binary at /opt/homebrew/bin/bosua (testmail integration not yet ported)".into(),
-                ));
+            use crate::errors::BosuaError;
+
+            // Generate a random email tag for testmail
+            let tag = format!("araxis-{}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis());
+
+            let email = format!("{}.phongblack@inbox.testmail.app", tag);
+            println!("Registration email: {}", email);
+
+            // Copy email to clipboard via pbcopy
+            let mut child = std::process::Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| BosuaError::Command(format!("Failed to run pbcopy: {}", e)))?;
+            if let Some(ref mut stdin) = child.stdin {
+                use std::io::Write;
+                let _ = stdin.write_all(email.as_bytes());
+            }
+            let _ = child.wait();
+            println!("Email copied to clipboard");
+
+            // Open Araxis registration page
+            let reg_url = "https://www.araxis.com/merge/register";
+            let _ = std::process::Command::new("open").arg(reg_url).status();
+            println!("Opened {} in browser", reg_url);
+            println!("Complete the registration form with the email above, then press Enter to check for the license key...");
+
+            // Wait for user
+            let mut buf = String::new();
+            let _ = std::io::stdin().read_line(&mut buf);
+
+            // Poll testmail API for the registration email
+            println!("Checking for registration email...");
+            let api_key = "3fb58953-1366-71b0-3019-ebb7b64a9835";
+            let namespace = "phongblack";
+            let testmail_url = format!(
+                "https://api.testmail.app/api/json?apikey={}&namespace={}&tag={}&livequery=true&timestamp_from={}",
+                api_key, namespace, tag,
+                (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() - 300) * 1000
+            );
+
+            let client = reqwest::Client::new();
+            for attempt in 1..=12 {
+                let resp = client.get(&testmail_url).send().await
+                    .map_err(|e| BosuaError::Command(format!("Testmail API error: {}", e)))?;
+                let body: serde_json::Value = resp.json().await
+                    .map_err(|e| BosuaError::Command(format!("Failed to parse testmail response: {}", e)))?;
+
+                if let Some(emails) = body.get("emails").and_then(|v| v.as_array()) {
+                    if let Some(email_obj) = emails.first() {
+                        let text = email_obj.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                        let html = email_obj.get("html").and_then(|v| v.as_str()).unwrap_or("");
+                        let content = if !text.is_empty() { text } else { html };
+                        println!("Registration email received:");
+                        println!("{}", content);
+                        return Ok(());
+                    }
+                }
+
+                if attempt < 12 {
+                    println!("  Attempt {}/12 - no email yet, waiting 10s...", attempt);
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                }
             }
 
-            let status = tokio::process::Command::new(go_bin)
-                .args(["araxis", "register"])
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .await
-                .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-
-            if !status.success() {
-                return Err(crate::errors::BosuaError::Command("Araxis registration failed".into()));
-            }
+            println!("No registration email received after 2 minutes. Check your Araxis registration.");
             Ok(())
         }
         _ => unreachable!("subcommand_required is set"),

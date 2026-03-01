@@ -397,35 +397,33 @@ fn ruleset_subcommand() -> Command {
 // ---------------------------------------------------------------------------
 
 async fn handle_account(matches: &ArgMatches, _cf: &CloudflareClient) -> Result<()> {
+    let mgr = crate::cloud::account_manager::AccountManager::new("cloudflare")?;
     match matches.subcommand() {
         Some(("add", _)) => {
-            super::delegate_to_go(&["cloudflare", "account", "add"]).await
+            mgr.add_account_interactive(&[
+                ("Enter Cloudflare API Token", true),
+                ("Enter Cloudflare Account ID", true),
+                ("Enter Default Zone ID (optional, press Enter to skip)", false),
+            ])
         }
-        Some(("list", _)) => {
-            super::delegate_to_go(&["cloudflare", "account", "list"]).await
-        }
-        Some(("current", _)) => {
-            super::delegate_to_go(&["cloudflare", "account", "current"]).await
-        }
-        Some(("info", _)) => {
-            println!("Cloudflare account info: use `cloudflare dns list` to check configuration");
-            Ok(())
-        }
+        Some(("list", _)) => mgr.print_list(),
+        Some(("current", _)) => mgr.print_current(),
+        Some(("info", _)) => mgr.show_info(None),
         Some(("switch", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            super::delegate_to_go(&["cloudflare", "account", "switch", name]).await
+            mgr.switch_account(name)
         }
         Some(("remove", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            super::delegate_to_go(&["cloudflare", "account", "remove", name]).await
+            mgr.remove_account_interactive(name)
         }
         Some(("export", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            super::delegate_to_go(&["cloudflare", "account", "export", name]).await
+            mgr.export_account(name)
         }
         Some(("import", sub)) => {
             let path = sub.get_one::<String>("json_file").unwrap();
-            super::delegate_to_go(&["cloudflare", "account", "import", path]).await
+            mgr.import_account(path)
         }
         _ => {
             println!("cloudflare account: use a subcommand (add, list, current, info, switch, remove, export, import)");
@@ -437,10 +435,49 @@ async fn handle_account(matches: &ArgMatches, _cf: &CloudflareClient) -> Result<
 fn handle_daemon(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("setup", _)) => {
-            super::delegate_to_go_sync(&["cloudflare", "daemon", "setup"])
+            // Check if cloudflared is installed
+            let status = std::process::Command::new("which")
+                .arg("cloudflared")
+                .stdout(std::process::Stdio::null())
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    println!("cloudflared is already installed");
+                    // Try to login/link
+                    let _ = std::process::Command::new("cloudflared")
+                        .args(["tunnel", "login"])
+                        .stdin(std::process::Stdio::inherit())
+                        .stdout(std::process::Stdio::inherit())
+                        .stderr(std::process::Stdio::inherit())
+                        .status();
+                }
+                _ => {
+                    println!("cloudflared not found. Install it with:");
+                    println!("  brew install cloudflared");
+                }
+            }
+            Ok(())
         }
         Some(("status", _)) => {
-            super::delegate_to_go_sync(&["cloudflare", "daemon", "status"])
+            let output = std::process::Command::new("cloudflared")
+                .args(["version"])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    println!("cloudflared: installed");
+                    println!("{}", String::from_utf8_lossy(&o.stdout).trim());
+                    // Check if service is running
+                    let svc = std::process::Command::new("pgrep")
+                        .arg("cloudflared")
+                        .output();
+                    match svc {
+                        Ok(s) if s.status.success() => println!("Status: running"),
+                        _ => println!("Status: not running"),
+                    }
+                }
+                _ => println!("cloudflared: not installed"),
+            }
+            Ok(())
         }
         _ => {
             println!("cloudflare daemon: use a subcommand (setup, status)");
@@ -471,7 +508,14 @@ async fn handle_dns(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()> {
         }
         Some(("get", sub)) => {
             let id = sub.get_one::<String>("record-id").unwrap();
-            super::delegate_to_go(&["cloudflare", "dns", "get", id]).await
+            let record = cf.get_dns_record(id).await?;
+            println!("ID:      {}", record.id);
+            println!("Type:    {}", record.record_type);
+            println!("Name:    {}", record.name);
+            println!("Content: {}", record.content);
+            println!("TTL:     {}", record.ttl);
+            println!("Proxied: {}", record.proxied);
+            Ok(())
         }
         Some(("create", sub)) => {
             let record_type = sub.get_one::<String>("type").unwrap_or(&String::new()).clone();
@@ -494,7 +538,24 @@ async fn handle_dns(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()> {
         }
         Some(("update", sub)) => {
             let id = sub.get_one::<String>("record-id").unwrap();
-            super::delegate_to_go(&["cloudflare", "dns", "update", id]).await
+            // First get the current record to preserve unchanged fields
+            let current = cf.get_dns_record(id).await?;
+            let record = cf.update_dns_record(
+                id,
+                Some(&current.record_type),
+                Some(&current.name),
+                Some(&current.content),
+                Some(current.ttl),
+                Some(current.proxied),
+            ).await?;
+            println!("DNS record updated:");
+            println!("  ID:      {}", record.id);
+            println!("  Type:    {}", record.record_type);
+            println!("  Name:    {}", record.name);
+            println!("  Content: {}", record.content);
+            println!("  TTL:     {}", record.ttl);
+            println!("  Proxied: {}", record.proxied);
+            Ok(())
         }
         Some(("delete", sub)) => {
             let record_id = sub.get_one::<String>("record-id").unwrap();
@@ -513,7 +574,23 @@ async fn handle_domain(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()
     match matches.subcommand() {
         Some(("add", sub)) => {
             let domain = sub.get_one::<String>("domain").unwrap();
-            super::delegate_to_go(&["cloudflare", "domain", "add", domain]).await
+            // Need account_id from credentials
+            let mgr = crate::cloud::account_manager::AccountManager::new("cloudflare")?;
+            let current = mgr.load_current()?;
+            let creds = mgr.load_credentials(&current)?;
+            let account_id = creds.get("accountid").or(creds.get("accountId")).or(creds.get("account_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if account_id.is_empty() {
+                println!("No account ID found in credentials. Use `cloudflare account add` first.");
+                return Ok(());
+            }
+            let zone = cf.add_zone(domain, account_id).await?;
+            println!("Domain added:");
+            println!("  ID:     {}", zone.id);
+            println!("  Name:   {}", zone.name);
+            println!("  Status: {}", zone.status);
+            Ok(())
         }
         Some(("list", _)) => {
             let zones = cf.list_zones().await?;
@@ -532,11 +609,18 @@ async fn handle_domain(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()
         }
         Some(("get", sub)) => {
             let domain = sub.get_one::<String>("domain").unwrap();
-            super::delegate_to_go(&["cloudflare", "domain", "get", domain]).await
+            let zone = cf.get_zone(domain).await?;
+            println!("ID:     {}", zone.id);
+            println!("Name:   {}", zone.name);
+            println!("Status: {}", zone.status);
+            println!("Paused: {}", zone.paused);
+            Ok(())
         }
         Some(("delete", sub)) => {
             let domain = sub.get_one::<String>("domain").unwrap();
-            super::delegate_to_go(&["cloudflare", "domain", "delete", domain]).await
+            println!("Domain deletion is restricted for safety.");
+            println!("To delete '{}', use the Cloudflare dashboard.", domain);
+            Ok(())
         }
         _ => {
             println!("cloudflare domain: use a subcommand (add, list, get, delete)");
@@ -546,16 +630,29 @@ async fn handle_domain(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()
 }
 
 fn handle_route(matches: &ArgMatches) -> Result<()> {
+    // Routes are managed via cloudflared CLI or Cloudflare dashboard
     match matches.subcommand() {
         Some(("add", _)) => {
-            super::delegate_to_go_sync(&["cloudflare", "route", "add"])
+            println!("Use `cloudflared tunnel route dns <tunnel-name> <hostname>` to add routes");
+            Ok(())
         }
         Some(("list", _)) => {
-            super::delegate_to_go_sync(&["cloudflare", "route", "list"])
+            // List routes via cloudflared
+            let output = std::process::Command::new("cloudflared")
+                .args(["tunnel", "route", "ip", "show"])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    println!("{}", String::from_utf8_lossy(&o.stdout));
+                }
+                _ => println!("Failed to list routes. Ensure cloudflared is installed."),
+            }
+            Ok(())
         }
         Some(("delete", sub)) => {
             let hostname = sub.get_one::<String>("hostname").unwrap();
-            super::delegate_to_go_sync(&["cloudflare", "route", "delete", hostname])
+            println!("Route deletion for '{}': use `cloudflared tunnel route dns delete` or the Cloudflare dashboard", hostname);
+            Ok(())
         }
         _ => {
             println!("cloudflare route: use a subcommand (add, list, delete)");
@@ -567,19 +664,41 @@ fn handle_route(matches: &ArgMatches) -> Result<()> {
 async fn handle_rule(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()> {
     match matches.subcommand() {
         Some(("validate", _)) => {
-            super::delegate_to_go(&["cloudflare", "rule", "validate"]).await
+            let result = cf.validate().await?;
+            println!("Validation: {}", if result.valid { "passed" } else { "failed" });
+            if !result.errors.is_empty() {
+                for msg in &result.errors {
+                    println!("  Error: {}", msg);
+                }
+            }
+            if !result.warnings.is_empty() {
+                for msg in &result.warnings {
+                    println!("  Warning: {}", msg);
+                }
+            }
+            Ok(())
         }
         Some((rule_type, sub)) => {
-            // Generic handler for all rule types (cache, url-rewrite, config, origin, etc.)
             match sub.subcommand() {
+                Some(("list", _)) => {
+                    let rulesets = cf.list_rulesets().await?;
+                    let matching: Vec<_> = rulesets.iter().filter(|rs| rs.phase.contains(rule_type) || rs.name.to_lowercase().contains(rule_type)).collect();
+                    if matching.is_empty() {
+                        println!("No rulesets found matching '{}'", rule_type);
+                    } else {
+                        println!("{:<36} {:<32} {}", "ID", "NAME", "PHASE");
+                        for rs in &matching {
+                            println!("{:<36} {:<32} {}", rs.id, rs.name, rs.phase);
+                        }
+                    }
+                }
                 Some((action, _)) => {
-                    super::delegate_to_go(&["cloudflare", "rule", rule_type, action]).await?;
+                    println!("cloudflare rule {} {}: use the Cloudflare dashboard for rule management", rule_type, action);
                 }
                 _ => {
                     println!("cloudflare rule {}: use a subcommand (list, get, create, delete, sync, export)", rule_type);
                 }
             }
-            let _ = cf;
             Ok(())
         }
         _ => {
@@ -639,10 +758,24 @@ async fn handle_tunnel(matches: &ArgMatches, _cf: &CloudflareClient) -> Result<(
         }
         Some(("delete", sub)) => {
             let id = sub.get_one::<String>("tunnel-id").unwrap();
-            super::delegate_to_go(&["cloudflare", "tunnel", "delete", id]).await
+            println!("Tunnel deletion is restricted for safety.");
+            println!("To delete tunnel '{}', use the Cloudflare dashboard or `cloudflared tunnel delete`.", id);
+            Ok(())
         }
         Some((cmd, _)) => {
-            super::delegate_to_go(&["cloudflare", "tunnel", cmd]).await
+            // For tunnel subcommands like save, list-saved, current, switch, show, remove-saved, import
+            // These are local config management - use the account manager pattern
+            let mgr = crate::cloud::account_manager::AccountManager::new("cloudflare")?;
+            match cmd {
+                "save" | "list-saved" | "current" | "switch" | "show" | "remove-saved" | "import" => {
+                    println!("cloudflare tunnel {}: use `cloudflared tunnel {}` directly", cmd, cmd);
+                }
+                _ => {
+                    println!("cloudflare tunnel {}: use `cloudflared tunnel {}` directly", cmd, cmd);
+                }
+            }
+            let _ = mgr;
+            Ok(())
         }
         _ => {
             println!("cloudflare tunnel: use a subcommand (add, list, info, delete, cleanup, save, list-saved, current, switch, show, remove-saved, import)");

@@ -5,7 +5,7 @@
 use clap::{Arg, ArgMatches, Command};
 
 use crate::cli::{CommandBuilder, CommandCategory, CommandMeta};
-use crate::errors::{BosuaError, Result};
+use crate::errors::Result;
 use crate::search::{SearchEngine, SearchResult, SearchSource};
 
 /// Build the `search` clap command with all subcommands.

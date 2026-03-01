@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::{Arg, ArgMatches, Command};
+use clap::{ArgMatches, Command};
 use tokio::sync::OnceCell;
 
 use crate::cli::{CommandBuilder, CommandCategory, CommandMeta};
@@ -284,43 +284,51 @@ pub fn registry_meta() -> CommandMeta {
 pub fn handle_registry(matches: &ArgMatches) {
     match matches.subcommand() {
         Some(("list", _)) => {
-            // Delegate to Go binary which has the full command registry
-            let go_bin = "/opt/homebrew/bin/bosua";
-            if std::path::Path::new(go_bin).exists() {
-                let _ = std::process::Command::new(go_bin)
-                    .args(["registry", "list"])
-                    .stdin(std::process::Stdio::inherit())
-                    .stdout(std::process::Stdio::inherit())
-                    .stderr(std::process::Stdio::inherit())
-                    .status();
-            } else {
-                println!("registry list requires the Go binary at /opt/homebrew/bin/bosua");
-            }
+            // Use the Rust CommandRegistry to list commands
+            use crate::cli::CommandRegistry;
+            let root = Command::new("bosua");
+            let mut registry = CommandRegistry::new(root);
+            #[cfg(feature = "macos")]
+            crate::commands::register_macos_commands(&mut registry);
+            #[cfg(not(feature = "macos"))]
+            crate::commands::register_linux_commands(&mut registry);
+
+            registry.list_commands();
         }
         Some(("stats", _)) => {
-            let go_bin = "/opt/homebrew/bin/bosua";
-            if std::path::Path::new(go_bin).exists() {
-                let _ = std::process::Command::new(go_bin)
-                    .args(["registry", "stats"])
-                    .stdin(std::process::Stdio::inherit())
-                    .stdout(std::process::Stdio::inherit())
-                    .stderr(std::process::Stdio::inherit())
-                    .status();
-            } else {
-                println!("registry stats requires the Go binary at /opt/homebrew/bin/bosua");
+            use crate::cli::CommandRegistry;
+            let root = Command::new("bosua");
+            let mut registry = CommandRegistry::new(root);
+            #[cfg(feature = "macos")]
+            crate::commands::register_macos_commands(&mut registry);
+            #[cfg(not(feature = "macos"))]
+            crate::commands::register_linux_commands(&mut registry);
+
+            let stats = registry.stats();
+            println!("Command Registry Statistics:");
+            println!("{}", "=".repeat(40));
+            println!("  {:<20} {}", "Total commands", stats.total);
+            for (category, count) in &stats.per_category {
+                println!("  {:<20} {}", format!("{}", category), count);
             }
         }
         Some(("validate", _)) => {
-            let go_bin = "/opt/homebrew/bin/bosua";
-            if std::path::Path::new(go_bin).exists() {
-                let _ = std::process::Command::new(go_bin)
-                    .args(["registry", "validate"])
-                    .stdin(std::process::Stdio::inherit())
-                    .stdout(std::process::Stdio::inherit())
-                    .stderr(std::process::Stdio::inherit())
-                    .status();
+            use crate::cli::CommandRegistry;
+            let root = Command::new("bosua");
+            let mut registry = CommandRegistry::new(root);
+            #[cfg(feature = "macos")]
+            crate::commands::register_macos_commands(&mut registry);
+            #[cfg(not(feature = "macos"))]
+            crate::commands::register_linux_commands(&mut registry);
+
+            let issues = registry.validate();
+            if issues.is_empty() {
+                println!("Registry validation passed. {} commands, no issues found.", registry.len());
             } else {
-                println!("registry validate requires the Go binary at /opt/homebrew/bin/bosua");
+                println!("Registry validation found {} issues:", issues.len());
+                for issue in &issues {
+                    println!("  - {}", issue);
+                }
             }
         }
         _ => unreachable!("subcommand_required is set"),

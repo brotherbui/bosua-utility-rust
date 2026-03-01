@@ -172,25 +172,48 @@ fn vmf_list() -> Result<()> {
     Ok(())
 }
 
-fn vmf_add(matches: &ArgMatches) -> Result<()> {
-    // Go expects: vmf add <author> <note> <sheet_url_or_id>
-    // But our CLI doesn't have positional args for add. Delegate to Go.
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
-        return Err(BosuaError::Command(
-            "vmf add: requires positional args (author, note, sheet_url_or_id). Use Go binary.".into(),
-        ));
+fn vmf_add(_matches: &ArgMatches) -> Result<()> {
+    // Interactive add: prompt for author, note, sheet URL
+    use std::io::Write;
+    let stdin = std::io::stdin();
+
+    print!("Author: ");
+    std::io::stdout().flush().ok();
+    let mut author = String::new();
+    stdin.read_line(&mut author).map_err(|e| BosuaError::Command(format!("Read error: {}", e)))?;
+    let author = author.trim().to_string();
+
+    print!("Note: ");
+    std::io::stdout().flush().ok();
+    let mut note = String::new();
+    stdin.read_line(&mut note).map_err(|e| BosuaError::Command(format!("Read error: {}", e)))?;
+    let note = note.trim().to_string();
+
+    print!("Sheet URL or ID: ");
+    std::io::stdout().flush().ok();
+    let mut url_input = String::new();
+    stdin.read_line(&mut url_input).map_err(|e| BosuaError::Command(format!("Read error: {}", e)))?;
+    let url_input = url_input.trim().to_string();
+
+    if author.is_empty() || note.is_empty() || url_input.is_empty() {
+        return Err(BosuaError::Command("All fields are required".into()));
     }
-    let status = std::process::Command::new(go_bin)
-        .args(["vmf", "add"])
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-    if !status.success() {
-        return Err(BosuaError::Command("vmf add failed".into()));
-    }
+
+    let sheet_id = extract_spreadsheet_id(&url_input)
+        .unwrap_or_else(|| url_input.clone());
+    let sheet_url = if url_input.contains("docs.google.com") {
+        url_input.clone()
+    } else {
+        format!("https://docs.google.com/spreadsheets/d/{}/edit", sheet_id)
+    };
+
+    let conn = vmf_open_db()?;
+    conn.execute(
+        "INSERT INTO vmf_sources (author, note, sheet_url, sheet_id) VALUES (?, ?, ?, ?)",
+        rusqlite::params![author, note, sheet_url, sheet_id],
+    ).map_err(|e| BosuaError::Application(format!("Failed to add source: {}", e)))?;
+
+    output::success(&format!("Added VMF source: {} - {}", author, note));
     Ok(())
 }
 
@@ -247,24 +270,58 @@ fn vmf_set_active(matches: &ArgMatches, active: bool) -> Result<()> {
 
 fn vmf_edit(matches: &ArgMatches) -> Result<()> {
     let id_str = matches.get_one::<String>("id").unwrap();
-    // Go expects: vmf edit <id> <author> <note> <sheet_url_or_id>
-    // Delegate to Go binary for the full interactive edit
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
-        return Err(BosuaError::Command(
-            "vmf edit: requires positional args. Use Go binary.".into(),
-        ));
-    }
-    let status = std::process::Command::new(go_bin)
-        .args(["vmf", "edit", id_str])
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-    if !status.success() {
-        return Err(BosuaError::Command("vmf edit failed".into()));
-    }
+    let id: i64 = id_str.parse().map_err(|_| BosuaError::Command("Invalid ID. Must be a number.".into()))?;
+
+    let conn = vmf_open_db()?;
+
+    // Get current values
+    let current = conn.query_row(
+        "SELECT author, note, sheet_url, sheet_id FROM vmf_sources WHERE id = ?",
+        [id],
+        |row| Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        )),
+    ).map_err(|_| BosuaError::Command(format!("Source not found: id {}", id)))?;
+
+    use std::io::Write;
+    let stdin = std::io::stdin();
+
+    print!("Author [{}]: ", current.0);
+    std::io::stdout().flush().ok();
+    let mut author = String::new();
+    stdin.read_line(&mut author).map_err(|e| BosuaError::Command(format!("Read error: {}", e)))?;
+    let author = if author.trim().is_empty() { current.0 } else { author.trim().to_string() };
+
+    print!("Note [{}]: ", current.1);
+    std::io::stdout().flush().ok();
+    let mut note = String::new();
+    stdin.read_line(&mut note).map_err(|e| BosuaError::Command(format!("Read error: {}", e)))?;
+    let note = if note.trim().is_empty() { current.1 } else { note.trim().to_string() };
+
+    print!("Sheet URL [{}]: ", current.2);
+    std::io::stdout().flush().ok();
+    let mut url_input = String::new();
+    stdin.read_line(&mut url_input).map_err(|e| BosuaError::Command(format!("Read error: {}", e)))?;
+    let (sheet_url, sheet_id) = if url_input.trim().is_empty() {
+        (current.2, current.3)
+    } else {
+        let url = url_input.trim().to_string();
+        let sid = extract_spreadsheet_id(&url).unwrap_or_else(|| url.clone());
+        let surl = if url.contains("docs.google.com") { url } else {
+            format!("https://docs.google.com/spreadsheets/d/{}/edit", sid)
+        };
+        (surl, sid)
+    };
+
+    conn.execute(
+        "UPDATE vmf_sources SET author = ?, note = ?, sheet_url = ?, sheet_id = ?, updated_at = datetime('now') WHERE id = ?",
+        rusqlite::params![author, note, sheet_url, sheet_id, id],
+    ).map_err(|e| BosuaError::Application(format!("Failed to update: {}", e)))?;
+
+    output::success(&format!("Updated VMF source ID {}", id));
     Ok(())
 }
 
@@ -319,48 +376,92 @@ fn vmf_init() -> Result<()> {
         .unwrap_or(0);
 
     if count > 0 {
-        output::info("Database already has sources. No default sources added.");
+        output::info(&format!("Database already has {} sources. No default sources added.", count));
         return Ok(());
     }
 
-    // Delegate to Go binary which has embedded default sources
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
-        return Err(BosuaError::Command(
-            "vmf init: default sources are embedded in Go binary. Install Go binary first.".into(),
-        ));
+    // Embedded default sources matching Go's GetDefaultSources()
+    let defaults = [
+        ("zinzuno", "Phim bộ TQ", "https://docs.google.com/spreadsheets/d/1Ejw4-XAT9EUuieKmLMtKwBGCtFcxsFkjfYRpqlrocfg/edit", "1Ejw4-XAT9EUuieKmLMtKwBGCtFcxsFkjfYRpqlrocfg"),
+        ("zinzuno", "Phim bộ HQ", "https://docs.google.com/spreadsheets/d/1AMNbCL4LBxC3yO5t5O_olMLRYqfEuV5ODcPj4kx0ZRk/edit", "1AMNbCL4LBxC3yO5t5O_olMLRYqfEuV5ODcPj4kx0ZRk"),
+        ("zinzuno", "Phim bộ TVB", "https://docs.google.com/spreadsheets/d/1sRtL12Z-nJ3oktb14zy-qu9I_rXjR8LxQljoLwaxmF0/edit", "1sRtL12Z-nJ3oktb14zy-qu9I_rXjR8LxQljoLwaxmF0"),
+        ("zinzuno", "Phim bộ Khác", "https://docs.google.com/spreadsheets/d/1PiVZWdvshhjMn3cd2QRB5hkd92ZqawnlsqGG1fD6WhQ/edit", "1PiVZWdvshhjMn3cd2QRB5hkd92ZqawnlsqGG1fD6WhQ"),
+        ("zinzuno", "Phim lẻ 2025", "https://docs.google.com/spreadsheets/d/1AUso14EWNjs4Fzs-Gu_W4Cjy4f4BCmHapmyppHxQupo/edit", "1AUso14EWNjs4Fzs-Gu_W4Cjy4f4BCmHapmyppHxQupo"),
+        ("zinzuno", "Phim lẻ 2024", "https://docs.google.com/spreadsheets/d/1D3UoGVSJwKp11fpZU9TQjIORFMViF1TFu-BQdGqmB3o/edit", "1D3UoGVSJwKp11fpZU9TQjIORFMViF1TFu-BQdGqmB3o"),
+        ("zinzuno", "Hoạt Hình", "https://docs.google.com/spreadsheets/d/1_Gw_dZbrr6NF9mBi23BIues1F36je5uVidRiFHpgixU/edit", "1_Gw_dZbrr6NF9mBi23BIues1F36je5uVidRiFHpgixU"),
+        ("LinhHuynh", "Phim bộ", "https://docs.google.com/spreadsheets/d/1z0kZmoa0roZ1wocW3VZc8kwUSbRYFSC7KSP8pbMQt50/edit", "1z0kZmoa0roZ1wocW3VZc8kwUSbRYFSC7KSP8pbMQt50"),
+        ("LinhHuynh", "Phim lẻ", "https://docs.google.com/spreadsheets/d/15gzhKzSTX-B-xO2vukcV-z-XzYSamlsSoCAyakmVt40/edit", "15gzhKzSTX-B-xO2vukcV-z-XzYSamlsSoCAyakmVt40"),
+        ("LinhHuynh", "Hoạt Hình", "https://docs.google.com/spreadsheets/d/1vGVWjdEjHowW5I_M42kItPYquOX6kiIX/edit", "1vGVWjdEjHowW5I_M42kItPYquOX6kiIX"),
+    ];
+
+    let mut added = 0;
+    for (author, note, url, sheet_id) in &defaults {
+        let result = conn.execute(
+            "INSERT OR IGNORE INTO vmf_sources (author, note, sheet_url, sheet_id) VALUES (?, ?, ?, ?)",
+            rusqlite::params![author, note, url, sheet_id],
+        );
+        if let Ok(n) = result {
+            if n > 0 { added += 1; }
+        }
     }
-    let status = std::process::Command::new(go_bin)
-        .args(["vmf", "init"])
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-    if !status.success() {
-        return Err(BosuaError::Command("vmf init failed".into()));
-    }
+
+    output::success(&format!("Initialized database with {} default sources", added));
     Ok(())
 }
 
 fn vmf_migrate() -> Result<()> {
-    // Delegate to Go binary which has the text file migration logic
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
-        return Err(BosuaError::Command(
-            "vmf migrate requires the Go binary at /opt/homebrew/bin/bosua".into(),
-        ));
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let text_file = format!("{}/bosua-vmf-sources.txt", home);
+
+    if !std::path::Path::new(&text_file).exists() {
+        return Err(BosuaError::Command(format!("Text file not found: {}", text_file)));
     }
-    let status = std::process::Command::new(go_bin)
-        .args(["vmf", "migrate"])
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-    if !status.success() {
-        return Err(BosuaError::Command("vmf migrate failed".into()));
+
+    let content = std::fs::read_to_string(&text_file).map_err(BosuaError::Io)?;
+    let conn = vmf_open_db()?;
+
+    let mut imported = 0;
+    let mut skipped = 0;
+
+    for (line_num, raw) in content.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Parse CSV: Author,Description,Link
+        let parts: Vec<&str> = line.splitn(3, ',').collect();
+        let (author, note, link) = if parts.len() >= 3 {
+            (parts[0].trim(), parts[1].trim(), parts[2].trim())
+        } else {
+            ("Unknown", "Imported from text file", line)
+        };
+
+        let sheet_id = match extract_spreadsheet_id(link) {
+            Some(id) => id,
+            None => {
+                println!("  Line {}: Invalid Google Sheets URL: {}", line_num + 1, link);
+                skipped += 1;
+                continue;
+            }
+        };
+
+        let result = conn.execute(
+            "INSERT OR IGNORE INTO vmf_sources (author, note, sheet_url, sheet_id) VALUES (?, ?, ?, ?)",
+            rusqlite::params![author, note, link, sheet_id],
+        );
+
+        match result {
+            Ok(n) if n > 0 => imported += 1,
+            Ok(_) => skipped += 1,
+            Err(e) => {
+                println!("  Line {}: Failed to add: {}", line_num + 1, e);
+                skipped += 1;
+            }
+        }
     }
+
+    output::success(&format!("Migration complete: {} imported, {} skipped", imported, skipped));
     Ok(())
 }
 

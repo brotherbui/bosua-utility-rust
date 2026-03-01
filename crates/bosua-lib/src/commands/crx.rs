@@ -61,31 +61,126 @@ async fn handle_convert(matches: &ArgMatches) -> Result<()> {
     let remove = matches.get_flag("remove");
     let team = matches.get_one::<String>("team").unwrap();
 
-    // Go passes trailing args as file paths to convert
-    // In Rust CLI we don't have trailing args, so delegate to Go binary
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
+    // Find extracted extension directories in current directory
+    let cwd = std::env::current_dir().map_err(BosuaError::Io)?;
+    let mut ext_dirs: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&cwd) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && path.join("manifest.json").exists() {
+                ext_dirs.push(path);
+            }
+        }
+    }
+
+    if ext_dirs.is_empty() {
         return Err(BosuaError::Command(
-            "CRX convert requires the Go binary at /opt/homebrew/bin/bosua (xcrun/xcodebuild integration not yet ported)".into(),
+            "No extracted extension directories found (looking for directories with manifest.json)".into(),
         ));
     }
 
-    let mut args = vec!["crx".to_string(), "convert".to_string()];
-    args.push(format!("--team={}", team));
-    if archive { args.push("--archive".to_string()); }
-    if install { args.push("--install".to_string()); }
-    if remove { args.push("--remove".to_string()); }
+    for ext_dir in &ext_dirs {
+        let ext_name = ext_dir.file_name().and_then(|n| n.to_str()).unwrap_or("extension");
+        println!("Converting {} from CRX to Xcode project", ext_name);
 
-    let output = tokio::process::Command::new(go_bin)
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+        let xcode_proj_path = cwd.join("Xcodeproj");
+        let mut cmd_args = vec![
+            "xcrun", "safari-web-extension-converter",
+            "--no-open", "--macos-only", "--copy-resources",
+            "--project-location",
+        ];
+        let xcode_str = xcode_proj_path.to_string_lossy().to_string();
+        cmd_args.push(&xcode_str);
+        let ext_str = ext_dir.to_string_lossy().to_string();
+        cmd_args.push(&ext_str);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if !stdout.is_empty() { print!("{}", stdout); }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.is_empty() { eprint!("{}", stderr); }
+        let status = tokio::process::Command::new(cmd_args[0])
+            .args(&cmd_args[1..])
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await
+            .map_err(|e| BosuaError::Command(format!("Failed to run xcrun: {}", e)))?;
+
+        if !status.success() {
+            println!("Warning: conversion failed for {}", ext_name);
+            continue;
+        }
+
+        if archive {
+            let project_path = format!("{}/{}/{}.xcodeproj", xcode_str, ext_name, ext_name);
+            let archive_path = format!("{}/{}.xcarchive", xcode_str, ext_name);
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let export_dir = format!("{}/{}-{}", cwd.display(), ext_name, timestamp);
+
+            // xcodebuild archive
+            let arch_status = tokio::process::Command::new("xcodebuild")
+                .args([
+                    "-project", &project_path,
+                    "-scheme", ext_name,
+                    "-archivePath", &archive_path,
+                    "archive",
+                    &format!("DEVELOPMENT_TEAM={}", team),
+                ])
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await
+                .map_err(|e| BosuaError::Command(format!("xcodebuild archive failed: {}", e)))?;
+
+            if arch_status.success() {
+                // Export
+                let plist_path = cwd.join("ExportOptions.plist");
+                if !plist_path.exists() {
+                    let plist_content = format!(
+                        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>method</key><string>developer-id</string>
+<key>teamID</key><string>{}</string>
+</dict></plist>"#,
+                        team
+                    );
+                    std::fs::write(&plist_path, plist_content).map_err(BosuaError::Io)?;
+                }
+
+                let _ = tokio::process::Command::new("xcodebuild")
+                    .args([
+                        "-exportArchive",
+                        "-archivePath", &archive_path,
+                        "-exportPath", &export_dir,
+                        "-exportOptionsPlist", &plist_path.to_string_lossy(),
+                    ])
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                    .await;
+
+                if install {
+                    // Find .app in export dir and copy to /Applications
+                    if let Ok(entries) = std::fs::read_dir(&export_dir) {
+                        for entry in entries.flatten() {
+                            if entry.path().extension().map(|e| e == "app").unwrap_or(false) {
+                                let dest = format!("/Applications/{}", entry.file_name().to_string_lossy());
+                                let _ = std::fs::rename(entry.path(), &dest);
+                                println!("Installed to {}", dest);
+                            }
+                        }
+                    }
+                }
+            }
+            // Cleanup Xcode project
+            let _ = std::fs::remove_dir_all(&xcode_proj_path);
+        }
+
+        if remove {
+            let _ = std::fs::remove_dir_all(ext_dir);
+        }
+    }
     Ok(())
 }
 
@@ -96,33 +191,111 @@ async fn handle_download(matches: &ArgMatches, http: &HttpClient) -> Result<()> 
     let install = matches.get_flag("install");
     let team = matches.get_one::<String>("team").unwrap();
 
-    // Delegate to Go binary which has full CRX download/extract/convert pipeline
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
-        return Err(BosuaError::Command(
-            "CRX download requires the Go binary at /opt/homebrew/bin/bosua".into(),
-        ));
+    // Read extension URL/ID from stdin or trailing args
+    print!("Enter Chrome Web Store URL or extension ID: ");
+    use std::io::Write;
+    std::io::stdout().flush().ok();
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).map_err(|e| {
+        BosuaError::Command(format!("Failed to read input: {}", e))
+    })?;
+    let input = input.trim();
+    if input.is_empty() {
+        return Err(BosuaError::Command("No extension URL or ID provided".into()));
     }
 
-    let mut args = vec!["crx".to_string(), "download".to_string()];
-    args.push(format!("--team={}", team));
-    if extract { args.push("--extract".to_string()); }
-    if convert { args.push("--convert".to_string()); }
-    if archive { args.push("--archive".to_string()); }
-    if install { args.push("--install".to_string()); }
+    // Extract extension ID and name from URL
+    let (ext_name, ext_id) = if input.contains('/') {
+        // It's a URL — extract ID and name
+        let parts: Vec<&str> = input.split('/').collect();
+        if parts.len() >= 6 {
+            (parts[4].to_string(), parts[5].split('?').next().unwrap_or(parts[5]).to_string())
+        } else {
+            (input.to_string(), input.to_string())
+        }
+    } else {
+        (input.to_string(), input.to_string())
+    };
 
-    let output = tokio::process::Command::new(go_bin)
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+    let download_url = CRX_DOWNLOAD_URL.replace("{EXT_ID}", &ext_id);
+    let output_path = format!("{}.crx", ext_name);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if !stdout.is_empty() { print!("{}", stdout); }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.is_empty() { eprint!("{}", stderr); }
+    println!("Downloading extension: {}", ext_name);
+    let client = http.get_client().await;
+    let resp = client.get(&download_url).send().await
+        .map_err(|e| BosuaError::Command(format!("Failed to download CRX: {}", e)))?;
 
-    let _ = http;
+    if !resp.status().is_success() {
+        return Err(BosuaError::Command(format!(
+            "Download failed with status: {}",
+            resp.status()
+        )));
+    }
+
+    let bytes = resp.bytes().await
+        .map_err(|e| BosuaError::Command(format!("Failed to read CRX data: {}", e)))?;
+    std::fs::write(&output_path, &bytes).map_err(BosuaError::Io)?;
+    println!("Downloaded: {} ({} bytes)", output_path, bytes.len());
+
+    if extract || convert {
+        // Extract CRX (it's a ZIP with a CRX header)
+        let extract_dir = ext_name.clone();
+        println!("Extracting to {}/", extract_dir);
+
+        std::fs::create_dir_all(&extract_dir).map_err(BosuaError::Io)?;
+        let unzip_status = tokio::process::Command::new("unzip")
+            .args(["-o", &output_path, "-d", &extract_dir])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map_err(|e| BosuaError::Command(format!("Failed to run unzip: {}", e)))?;
+
+        if !unzip_status.success() {
+            return Err(BosuaError::Command("Failed to extract CRX file".into()));
+        }
+        println!("Extracted to {}/", extract_dir);
+
+        if convert {
+            // Use xcrun to convert
+            println!("Converting to Safari extension...");
+            let xcode_proj = "Xcodeproj";
+            let status = tokio::process::Command::new("xcrun")
+                .args([
+                    "safari-web-extension-converter",
+                    "--no-open", "--macos-only", "--copy-resources",
+                    "--project-location", xcode_proj,
+                    &extract_dir,
+                ])
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await
+                .map_err(|e| BosuaError::Command(format!("xcrun failed: {}", e)))?;
+
+            if status.success() && archive {
+                let project_path = format!("{}/{}/{}.xcodeproj", xcode_proj, ext_name, ext_name);
+                let archive_path = format!("{}/{}.xcarchive", xcode_proj, ext_name);
+                let _ = tokio::process::Command::new("xcodebuild")
+                    .args([
+                        "-project", &project_path,
+                        "-scheme", &ext_name,
+                        "-archivePath", &archive_path,
+                        "archive",
+                        &format!("DEVELOPMENT_TEAM={}", team),
+                    ])
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                    .await;
+
+                if install {
+                    println!("Install step: check {}/", xcode_proj);
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

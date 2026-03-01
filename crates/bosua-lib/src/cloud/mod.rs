@@ -1,3 +1,4 @@
+pub mod account_manager;
 pub mod aws;
 pub mod cloudflare;
 pub mod fshare;

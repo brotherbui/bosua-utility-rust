@@ -81,7 +81,7 @@ fn rewrite_url(original_url: &str, premium_domain: &str) -> Result<String> {
 /// Handle the `medium` command.
 pub async fn handle_medium(
     matches: &ArgMatches,
-    config: &DynamicConfig,
+    _config: &DynamicConfig,
     http: &HttpClient,
 ) -> Result<()> {
     let url = matches.get_one::<String>("url").unwrap();

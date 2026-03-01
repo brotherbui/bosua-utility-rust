@@ -567,6 +567,39 @@ impl GDriveClient {
         Ok(())
     }
 
+    /// Rename a file.
+    pub async fn rename_file(
+        &self,
+        file_id: &str,
+        new_name: &str,
+    ) -> Result<GDriveFile> {
+        let _guard = self.acquire_lock()?;
+        let token = self.access_token().await?;
+        let client = self.http.get_client().await;
+
+        let body = serde_json::json!({ "name": new_name });
+
+        let resp = client
+            .patch(format!("{DRIVE_API_BASE}/files/{file_id}"))
+            .bearer_auth(&token)
+            .query(&[("fields", "id,name,mimeType,size,parents")])
+            .json(&body)
+            .send()
+            .await
+            .map_err(BosuaError::Http)?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BosuaError::Cloud {
+                service: "gdrive".into(),
+                message: format!("rename_file failed ({status}): {body}"),
+            });
+        }
+
+        resp.json::<GDriveFile>().await.map_err(BosuaError::Http)
+    }
+
     /// Move a file to a different folder.
     pub async fn move_file(
         &self,

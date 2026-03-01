@@ -203,7 +203,10 @@ async fn handle_account(matches: &ArgMatches) -> Result<()> {
             Ok(())
         }
         Some((name, _)) => {
-            super::delegate_to_go(&["gcloud", "account", name]).await
+            // Delegate to gcloud CLI for other account subcommands
+            let output = crate::utils::run_external_tool("gcloud", &["auth", name]).await?;
+            println!("{}", output);
+            Ok(())
         }
         _ => {
             println!("gcloud account: use a subcommand");

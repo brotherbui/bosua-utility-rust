@@ -367,7 +367,7 @@ async fn handle_token(matches: &ArgMatches, fshare: &FShareClient) -> Result<()>
 async fn handle_get(
     matches: &ArgMatches,
     fshare: &FShareClient,
-    dl: Option<&DownloadManager>,
+    _dl: Option<&DownloadManager>,
 ) -> Result<()> {
     let inputs: Vec<String> = matches
         .get_many::<String>("links")

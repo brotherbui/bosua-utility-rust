@@ -47,64 +47,6 @@ use crate::cli::{CommandBuilder, CommandCategory, CommandRegistry};
 use crate::commands::registry_cmd::ServiceRegistry;
 use crate::errors::{BosuaError, Result};
 
-/// Delegate a command to the Go binary at `/opt/homebrew/bin/bosua`.
-///
-/// `args` should be the full argument list after the binary name,
-/// e.g. `&["cloudflare", "account", "add"]`.
-pub(crate) async fn delegate_to_go(args: &[&str]) -> Result<()> {
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
-        return Err(BosuaError::Command(format!(
-            "{} requires the Go binary at {}",
-            args.join(" "),
-            go_bin
-        )));
-    }
-    let status = tokio::process::Command::new(go_bin)
-        .args(args)
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .await
-        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-    if !status.success() {
-        return Err(BosuaError::Command(format!(
-            "{} failed with exit code {:?}",
-            args.join(" "),
-            status.code()
-        )));
-    }
-    Ok(())
-}
-
-/// Synchronous version of `delegate_to_go` for non-async contexts.
-pub(crate) fn delegate_to_go_sync(args: &[&str]) -> Result<()> {
-    let go_bin = "/opt/homebrew/bin/bosua";
-    if !std::path::Path::new(go_bin).exists() {
-        return Err(BosuaError::Command(format!(
-            "{} requires the Go binary at {}",
-            args.join(" "),
-            go_bin
-        )));
-    }
-    let status = std::process::Command::new(go_bin)
-        .args(args)
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-    if !status.success() {
-        return Err(BosuaError::Command(format!(
-            "{} failed with exit code {:?}",
-            args.join(" "),
-            status.code()
-        )));
-    }
-    Ok(())
-}
-
 /// Register the full 40+ command set for the macOS variant.
 ///
 /// Matches Go's `app.go` `RegisterCommands()` which calls:

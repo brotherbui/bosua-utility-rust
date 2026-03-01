@@ -88,81 +88,135 @@ pub async fn handle_sms_activate(matches: &ArgMatches, http: &HttpClient) -> Res
             Ok(())
         }
         Some(("cancel", _)) => {
-            // Delegate to Go binary which has full SMS activation state management
-            let go_bin = "/opt/homebrew/bin/bosua";
-            if !std::path::Path::new(go_bin).exists() {
-                return Err(BosuaError::Command("smsactivate cancel requires the Go binary".into()));
-            }
-            let status = std::process::Command::new(go_bin)
-                .args(["smsactivate", "cancel"])
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-            if !status.success() {
-                return Err(BosuaError::Command("smsactivate cancel failed".into()));
+            // Get active activations, find the latest, cancel it
+            let url = format!("{}?api_key={}&action=getActiveActivations", SMS_ACTIVATE_API_URL, api_key);
+            let resp = client.get(&url).send().await
+                .map_err(|e| BosuaError::Command(format!("Failed to get activations: {}", e)))?;
+            let body = resp.text().await
+                .map_err(|e| BosuaError::Command(format!("Failed to read response: {}", e)))?;
+
+            // Parse response to find activation ID
+            let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+            let activations = parsed.get("activeActivations");
+            let activation_id = match activations {
+                Some(serde_json::Value::Array(arr)) => {
+                    arr.first()
+                        .and_then(|a| a.get("activationId"))
+                        .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
+                        .map(|s| s.to_string())
+                        .or_else(|| arr.first().and_then(|a| a.get("activationId")).and_then(|v| v.as_i64()).map(|n| n.to_string()))
+                }
+                Some(serde_json::Value::Object(map)) => {
+                    map.values().next()
+                        .and_then(|a| a.get("activationId"))
+                        .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                }
+                _ => None,
+            };
+
+            match activation_id {
+                Some(id) => {
+                    let cancel_url = format!("{}?api_key={}&action=setStatus&id={}&status=-1", SMS_ACTIVATE_API_URL, api_key, id);
+                    let cancel_resp = client.get(&cancel_url).send().await
+                        .map_err(|e| BosuaError::Command(format!("Failed to cancel: {}", e)))?;
+                    let cancel_body = cancel_resp.text().await.unwrap_or_default();
+                    println!("{}", cancel_body);
+                }
+                None => {
+                    println!("No active activations found to cancel");
+                }
             }
             Ok(())
         }
         Some(("check", _)) => {
-            // Delegate to Go binary which has polling/context support
-            let go_bin = "/opt/homebrew/bin/bosua";
-            if !std::path::Path::new(go_bin).exists() {
-                return Err(BosuaError::Command("smsactivate check requires the Go binary".into()));
+            // Poll active activations for SMS code
+            let url = format!("{}?api_key={}&action=getActiveActivations", SMS_ACTIVATE_API_URL, api_key);
+            let resp = client.get(&url).send().await
+                .map_err(|e| BosuaError::Command(format!("Failed to get activations: {}", e)))?;
+            let body = resp.text().await
+                .map_err(|e| BosuaError::Command(format!("Failed to read response: {}", e)))?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+            let activations = parsed.get("activeActivations");
+
+            // Look for smsCode in any activation
+            let mut found_code = false;
+            if let Some(acts) = activations {
+                let items: Vec<&serde_json::Value> = match acts {
+                    serde_json::Value::Array(arr) => arr.iter().collect(),
+                    serde_json::Value::Object(map) => map.values().collect(),
+                    _ => vec![],
+                };
+                for item in items {
+                    if let Some(code) = item.get("smsCode").and_then(|v| v.as_str()) {
+                        if !code.is_empty() {
+                            let phone = item.get("phoneNumber").and_then(|v| v.as_str()).unwrap_or("unknown");
+                            println!("Phone: {} -> Code: {}", phone, code);
+                            found_code = true;
+                        }
+                    }
+                }
             }
-            let status = std::process::Command::new(go_bin)
-                .args(["smsactivate", "check"])
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-            if !status.success() {
-                return Err(BosuaError::Command("smsactivate check failed".into()));
+            if !found_code {
+                println!("No SMS codes received yet. Waiting...");
             }
             Ok(())
         }
         Some(("generate", _)) => {
-            // Delegate to Go binary which generates country/service maps
-            let go_bin = "/opt/homebrew/bin/bosua";
-            if !std::path::Path::new(go_bin).exists() {
-                return Err(BosuaError::Command("smsactivate generate requires the Go binary".into()));
-            }
-            let status = std::process::Command::new(go_bin)
-                .args(["smsactivate", "generate"])
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-            if !status.success() {
-                return Err(BosuaError::Command("smsactivate generate failed".into()));
-            }
+            // Generate country/service maps from API
+            let countries_url = format!("{}?api_key={}&action=getCountries", SMS_ACTIVATE_API_URL, api_key);
+            let resp = client.get(&countries_url).send().await
+                .map_err(|e| BosuaError::Command(format!("Failed to get countries: {}", e)))?;
+            let body = resp.text().await
+                .map_err(|e| BosuaError::Command(format!("Failed to read response: {}", e)))?;
+            println!("Countries data:");
+            println!("{}", body);
             Ok(())
         }
         Some(("list", sub)) => {
-            let go_bin = "/opt/homebrew/bin/bosua";
-            if !std::path::Path::new(go_bin).exists() {
-                return Err(BosuaError::Command("smsactivate list requires the Go binary".into()));
-            }
-            let subcmd = match sub.subcommand() {
-                Some(("country", _)) => "country",
-                Some(("service", _)) => "service",
+            match sub.subcommand() {
+                Some(("country", _)) => {
+                    let url = format!("{}?api_key={}&action=getCountries", SMS_ACTIVATE_API_URL, api_key);
+                    let resp = client.get(&url).send().await
+                        .map_err(|e| BosuaError::Command(format!("Failed to get countries: {}", e)))?;
+                    let body: serde_json::Value = resp.json().await
+                        .map_err(|e| BosuaError::Command(format!("Failed to parse response: {}", e)))?;
+                    if let Some(obj) = body.as_object() {
+                        println!("{:<6} {}", "ID", "Country");
+                        let mut entries: Vec<_> = obj.iter().collect();
+                        entries.sort_by_key(|(k, _)| k.parse::<i64>().unwrap_or(0));
+                        for (id, info) in entries {
+                            let name = info.get("eng").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                            println!("{:<6} {}", id, name);
+                        }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+                    }
+                }
+                Some(("service", _)) => {
+                    let url = format!("{}?api_key={}&action=getServicesList", SMS_ACTIVATE_API_URL, api_key);
+                    let resp = client.get(&url).send().await
+                        .map_err(|e| BosuaError::Command(format!("Failed to get services: {}", e)))?;
+                    let body: serde_json::Value = resp.json().await
+                        .map_err(|e| BosuaError::Command(format!("Failed to parse response: {}", e)))?;
+                    if let Some(services) = body.get("services") {
+                        if let Some(arr) = services.as_array() {
+                            println!("{:<8} {}", "Code", "Name");
+                            for svc in arr {
+                                let code = svc.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                                let name = svc.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                println!("{:<8} {}", code, name);
+                            }
+                        } else {
+                            println!("{}", serde_json::to_string_pretty(services).unwrap_or_default());
+                        }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+                    }
+                }
                 _ => {
                     println!("smsactivate list: use a subcommand (country, service)");
-                    return Ok(());
                 }
-            };
-            let status = std::process::Command::new(go_bin)
-                .args(["smsactivate", "list", subcmd])
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
-            if !status.success() {
-                return Err(BosuaError::Command("smsactivate list failed".into()));
             }
             Ok(())
         }

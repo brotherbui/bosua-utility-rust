@@ -169,6 +169,131 @@ impl TailscaleClient {
         Ok(())
     }
 
+    /// Authorize (approve) a device.
+    pub async fn authorize_device(&self, device_id: &str) -> Result<()> {
+        self.ts_post_json(
+            &format!("{TS_API_BASE}/device/{device_id}/authorized"),
+            &serde_json::json!({ "authorized": true }),
+        ).await
+    }
+
+    /// Deauthorize a device.
+    pub async fn deauthorize_device(&self, device_id: &str) -> Result<()> {
+        self.ts_post_json(
+            &format!("{TS_API_BASE}/device/{device_id}/authorized"),
+            &serde_json::json!({ "authorized": false }),
+        ).await
+    }
+
+    /// Set the name of a device.
+    pub async fn set_device_name(&self, device_id: &str, name: &str) -> Result<()> {
+        self.ts_post_json(
+            &format!("{TS_API_BASE}/device/{device_id}/name"),
+            &serde_json::json!({ "name": name }),
+        ).await
+    }
+
+    /// Set tags for a device.
+    pub async fn set_device_tags(&self, device_id: &str, tags: &[String]) -> Result<()> {
+        self.ts_post_json(
+            &format!("{TS_API_BASE}/device/{device_id}/tags"),
+            &serde_json::json!({ "tags": tags }),
+        ).await
+    }
+
+    /// Disable key expiry for a device.
+    pub async fn disable_key_expiry(&self, device_id: &str) -> Result<()> {
+        self.ts_post_json(
+            &format!("{TS_API_BASE}/device/{device_id}/key"),
+            &serde_json::json!({ "keyExpiryDisabled": true }),
+        ).await
+    }
+
+    /// Set IPv4 address for a device.
+    pub async fn set_device_ipv4(&self, device_id: &str, ipv4: &str) -> Result<()> {
+        self.ts_post_json(
+            &format!("{TS_API_BASE}/device/{device_id}/ip"),
+            &serde_json::json!({ "ipv4": ipv4 }),
+        ).await
+    }
+
+    /// Approve a device as an exit node by enabling its advertised routes.
+    pub async fn approve_exit_node(&self, device_id: &str) -> Result<()> {
+        let routes = self.get_device_routes(device_id).await?;
+        let advertised: Vec<String> = routes.iter()
+            .filter(|r| r.advertised)
+            .map(|r| r.prefix.clone())
+            .collect();
+        self.set_device_routes(device_id, &advertised).await
+    }
+
+    /// Create an auth key for the tailnet.
+    pub async fn create_auth_key(
+        &self,
+        reusable: bool,
+        ephemeral: bool,
+        tags: &[String],
+        expiry_seconds: u64,
+    ) -> Result<TsAuthKey> {
+        let client = self.http.get_client().await;
+        let url = format!("{TS_API_BASE}/tailnet/{}/keys", self.tailnet);
+
+        let body = serde_json::json!({
+            "capabilities": {
+                "devices": {
+                    "create": {
+                        "reusable": reusable,
+                        "ephemeral": ephemeral,
+                        "preauthorized": true,
+                        "tags": tags,
+                    }
+                }
+            },
+            "expirySeconds": expiry_seconds,
+        });
+
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(BosuaError::Http)?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(BosuaError::Cloud {
+                service: "tailscale".into(),
+                message: format!("create_auth_key failed ({status}): {text}"),
+            });
+        }
+
+        resp.json::<TsAuthKey>().await.map_err(BosuaError::Http)
+    }
+
+    /// Helper to POST JSON to a Tailscale API endpoint.
+    async fn ts_post_json(&self, url: &str, body: &serde_json::Value) -> Result<()> {
+        let client = self.http.get_client().await;
+        let resp = client
+            .post(url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(body)
+            .send()
+            .await
+            .map_err(BosuaError::Http)?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(BosuaError::Cloud {
+                service: "tailscale".into(),
+                message: format!("API request failed ({status}): {text}"),
+            });
+        }
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // ACL policy management
     // -----------------------------------------------------------------------

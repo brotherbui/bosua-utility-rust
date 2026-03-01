@@ -290,7 +290,8 @@ async fn handle_account(matches: &ArgMatches, config_mgr: &DynamicConfigManager)
             Ok(())
         }
         Some((name, _)) => {
-            super::delegate_to_go(&["aws", "account", name]).await
+            println!("aws account {}: use the AWS console or `aws configure`", name);
+            Ok(())
         }
         _ => {
             println!("aws account: use a subcommand");
@@ -353,7 +354,8 @@ async fn handle_instance(matches: &ArgMatches, client: &mut AwsClient) -> Result
             Ok(())
         }
         Some((name, _)) => {
-            super::delegate_to_go(&["aws", "instance", name]).await
+            println!("aws instance {}: use `aws ec2 {}` directly", name, name);
+            Ok(())
         }
         _ => {
             println!("aws instance: use a subcommand");
@@ -381,7 +383,8 @@ async fn handle_firewall(matches: &ArgMatches, client: &mut AwsClient) -> Result
             Ok(())
         }
         Some((name, _)) => {
-            super::delegate_to_go(&["aws", "firewall", name]).await
+            println!("aws firewall {}: use `aws ec2 {}` directly", name, name);
+            Ok(())
         }
         _ => {
             println!("aws firewall: use a subcommand");
@@ -423,7 +426,8 @@ async fn handle_sg(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> {
             Ok(())
         }
         Some((name, _)) => {
-            super::delegate_to_go(&["aws", "sg", name]).await
+            println!("aws sg {}: use `aws ec2 {}` directly", name, name);
+            Ok(())
         }
         _ => {
             println!("aws sg: use a subcommand");
