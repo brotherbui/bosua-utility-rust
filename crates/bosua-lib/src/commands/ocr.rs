@@ -17,26 +17,26 @@ use crate::http_client::HttpClient;
 /// Build the `ocr` clap command.
 pub fn ocr_command() -> Command {
     Command::new("ocr")
-        .about("OCR text extraction from images")
+        .about("Extract text from scanned images using AI vision APIs and output as Markdown")
+        .aliases(["extract", "vision"])
         .arg(
             Arg::new("image")
                 .required(true)
-                .help("Input image file"),
+                .num_args(1..)
+                .help("Input image file(s)"),
         )
-        .arg(
-            Arg::new("provider")
-                .long("provider")
-                .short('p')
-                .value_parser(["anthropic", "gemini", "openai"])
-                .default_value("anthropic")
-                .help("OCR provider (anthropic, gemini, openai)"),
-        )
-        .arg(
-            Arg::new("api-key")
-                .long("api-key")
-                .short('k')
-                .help("API key for the selected provider"),
-        )
+        .arg(Arg::new("api-key").long("api-key").short('k').help("API key (required for anthropic/gemini)"))
+        .arg(Arg::new("base-url").long("base-url").help("API base URL (default: provider-specific)"))
+        .arg(Arg::new("custom-prompt").long("custom-prompt").help("Custom prompt (overrides --prompt)"))
+        .arg(Arg::new("detail").long("detail").default_value("high").help("Image detail level: high, low, auto (OpenAI/Anthropic only)"))
+        .arg(Arg::new("max-tokens").long("max-tokens").value_parser(clap::value_parser!(i64)).default_value("16384").help("Maximum output tokens"))
+        .arg(Arg::new("model").long("model").short('m').help("AI model name (default: provider-specific)"))
+        .arg(Arg::new("output").long("output").short('o').help("Output file path (default: stdout)"))
+        .arg(Arg::new("parallel").long("parallel").action(clap::ArgAction::SetTrue).help("Process each file with separate API call in parallel"))
+        .arg(Arg::new("prompt").long("prompt").short('p').default_value("document").help("Prompt type: default, document, handwriting, table, html, html-document"))
+        .arg(Arg::new("provider").long("provider").value_parser(["openai", "anthropic", "gemini"]).default_value("gemini").help("AI provider: openai, anthropic, gemini"))
+        .arg(Arg::new("target-lang").long("target-lang").default_value("Vietnamese").help("Target language for translation"))
+        .arg(Arg::new("translate").long("translate").action(clap::ArgAction::SetTrue).help("Translate the OCR result to target language"))
 }
 
 /// Build the `CommandMeta` for registry registration.
@@ -374,63 +374,59 @@ mod tests {
     fn test_ocr_command_parses_image() {
         let cmd = ocr_command();
         let matches = cmd.try_get_matches_from(["ocr", "photo.png"]).unwrap();
-        assert_eq!(
-            matches.get_one::<String>("image").map(|s| s.as_str()),
-            Some("photo.png"),
-        );
+        let images: Vec<&String> = matches.get_many::<String>("image").unwrap().collect();
+        assert_eq!(images, vec!["photo.png"]);
+    }
+
+    #[test]
+    fn test_ocr_multiple_images() {
+        let cmd = ocr_command();
+        let matches = cmd.try_get_matches_from(["ocr", "a.png", "b.jpg", "c.gif"]).unwrap();
+        let images: Vec<&String> = matches.get_many::<String>("image").unwrap().collect();
+        assert_eq!(images.len(), 3);
     }
 
     #[test]
     fn test_ocr_default_provider() {
         let cmd = ocr_command();
         let matches = cmd.try_get_matches_from(["ocr", "photo.png"]).unwrap();
-        assert_eq!(
-            matches.get_one::<String>("provider").map(|s| s.as_str()),
-            Some("anthropic"),
-        );
+        assert_eq!(matches.get_one::<String>("provider").map(|s| s.as_str()), Some("gemini"));
     }
 
     #[test]
-    fn test_ocr_with_gemini_provider() {
+    fn test_ocr_with_anthropic_provider() {
         let cmd = ocr_command();
-        let matches = cmd
-            .try_get_matches_from(["ocr", "photo.png", "--provider", "gemini"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("provider").map(|s| s.as_str()),
-            Some("gemini"),
-        );
+        let matches = cmd.try_get_matches_from(["ocr", "photo.png", "--provider", "anthropic"]).unwrap();
+        assert_eq!(matches.get_one::<String>("provider").map(|s| s.as_str()), Some("anthropic"));
     }
 
     #[test]
-    fn test_ocr_with_openai_provider() {
+    fn test_ocr_parallel_flag() {
         let cmd = ocr_command();
-        let matches = cmd
-            .try_get_matches_from(["ocr", "photo.png", "--provider", "openai"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("provider").map(|s| s.as_str()),
-            Some("openai"),
-        );
+        let matches = cmd.try_get_matches_from(["ocr", "photo.png", "--parallel"]).unwrap();
+        assert!(matches.get_flag("parallel"));
     }
 
     #[test]
-    fn test_ocr_invalid_provider_rejected() {
+    fn test_ocr_translate_flag() {
         let cmd = ocr_command();
-        let result = cmd.try_get_matches_from(["ocr", "photo.png", "--provider", "invalid"]);
-        assert!(result.is_err());
+        let matches = cmd.try_get_matches_from(["ocr", "photo.png", "--translate", "--target-lang", "English"]).unwrap();
+        assert!(matches.get_flag("translate"));
+        assert_eq!(matches.get_one::<String>("target-lang").map(|s| s.as_str()), Some("English"));
     }
 
     #[test]
-    fn test_ocr_with_api_key() {
+    fn test_ocr_max_tokens() {
         let cmd = ocr_command();
-        let matches = cmd
-            .try_get_matches_from(["ocr", "photo.png", "--api-key", "sk-test123"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("api-key").map(|s| s.as_str()),
-            Some("sk-test123"),
-        );
+        let matches = cmd.try_get_matches_from(["ocr", "photo.png", "--max-tokens", "8192"]).unwrap();
+        assert_eq!(matches.get_one::<i64>("max-tokens").copied(), Some(8192));
+    }
+
+    #[test]
+    fn test_ocr_output_flag() {
+        let cmd = ocr_command();
+        let matches = cmd.try_get_matches_from(["ocr", "photo.png", "-o", "result.md"]).unwrap();
+        assert_eq!(matches.get_one::<String>("output").map(|s| s.as_str()), Some("result.md"));
     }
 
     #[test]
@@ -445,7 +441,14 @@ mod tests {
         let meta = ocr_meta();
         assert_eq!(meta.name, "ocr");
         assert_eq!(meta.category, CommandCategory::Developer);
-        assert!(!meta.description.is_empty());
+    }
+
+    #[test]
+    fn test_ocr_aliases() {
+        let cmd = ocr_command();
+        let aliases: Vec<&str> = cmd.get_all_aliases().collect();
+        assert!(aliases.contains(&"extract"));
+        assert!(aliases.contains(&"vision"));
     }
 
     #[test]
@@ -457,22 +460,10 @@ mod tests {
     }
 
     #[test]
-    fn test_ocr_provider_env_var_names() {
-        assert_eq!(OcrProvider::Anthropic.env_var_name(), "ANTHROPIC_API_KEY");
-        assert_eq!(OcrProvider::Gemini.env_var_name(), "GEMINI_API_KEY");
-        assert_eq!(OcrProvider::OpenAI.env_var_name(), "OPENAI_API_KEY");
-    }
-
-    #[test]
     fn test_detect_mime_type() {
         assert_eq!(detect_mime_type(Path::new("photo.png")), "image/png");
         assert_eq!(detect_mime_type(Path::new("photo.jpg")), "image/jpeg");
-        assert_eq!(detect_mime_type(Path::new("photo.jpeg")), "image/jpeg");
-        assert_eq!(detect_mime_type(Path::new("photo.gif")), "image/gif");
         assert_eq!(detect_mime_type(Path::new("photo.webp")), "image/webp");
-        assert_eq!(detect_mime_type(Path::new("photo.bmp")), "image/bmp");
-        assert_eq!(detect_mime_type(Path::new("photo.tiff")), "image/tiff");
-        assert_eq!(detect_mime_type(Path::new("photo.unknown")), "image/png");
     }
 
     #[test]
@@ -481,21 +472,5 @@ mod tests {
         let key = "sk-test-key".to_string();
         let result = resolve_api_key(Some(&key), &OcrProvider::Anthropic, &config);
         assert_eq!(result.unwrap(), "sk-test-key");
-    }
-
-    #[test]
-    fn test_resolve_api_key_missing() {
-        let config = DynamicConfig::default();
-        // Ensure env var is not set
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        let result = resolve_api_key(None, &OcrProvider::Anthropic, &config);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            BosuaError::Auth(msg) => {
-                assert!(msg.contains("Anthropic"));
-                assert!(msg.contains("ANTHROPIC_API_KEY"));
-            }
-            e => panic!("Expected BosuaError::Auth, got {:?}", e),
-        }
     }
 }

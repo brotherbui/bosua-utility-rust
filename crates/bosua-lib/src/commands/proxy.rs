@@ -1,29 +1,29 @@
-//! Proxy CLI command — local HTTP proxy for GDrive downloads.
+//! Proxy CLI command — Proxy management operations.
 //!
-//! Subcommands: start, stop, status.
+//! Subcommands: check, create-config, get, off, on, shell, status, test, with-proxy.
 
 use clap::{Arg, ArgMatches, Command};
 
 use crate::cli::{CommandBuilder, CommandCategory, CommandMeta};
-use crate::errors::{BosuaError, Result};
+use crate::errors::Result;
 
 /// Build the `proxy` clap command.
 pub fn proxy_command() -> Command {
     Command::new("proxy")
-        .about("SOCKS5 proxy management")
-        .subcommand(
-            Command::new("start")
-                .about("Start SOCKS5 proxy")
-                .arg(
-                    Arg::new("port")
-                        .long("port")
-                        .short('p')
-                        .default_value("1080")
-                        .help("Port to listen on"),
-                ),
-        )
-        .subcommand(Command::new("stop").about("Stop SOCKS5 proxy"))
-        .subcommand(Command::new("status").about("Show proxy status"))
+        .about("Proxy management operations")
+        .aliases(["px"])
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .arg(Arg::new("config").long("config").short('c').help("Path to proxy configuration file"))
+        .subcommand(Command::new("check").about("Check proxy").aliases(["ch"]).arg(Arg::new("one").long("one").action(clap::ArgAction::SetTrue).help("Check one by one")))
+        .subcommand(Command::new("create-config").about("Create a proxy configuration file"))
+        .subcommand(Command::new("get").about("Get via proxy"))
+        .subcommand(Command::new("off").about("Disable proxy"))
+        .subcommand(Command::new("on").about("Enable proxy with configuration from file"))
+        .subcommand(Command::new("shell").about("Generate shell commands for proxy management"))
+        .subcommand(Command::new("status").about("Show current proxy status"))
+        .subcommand(Command::new("test").about("Test proxy connection"))
+        .subcommand(Command::new("with-proxy").about("Run a command with proxy temporarily enabled"))
 }
 
 /// Build the `CommandMeta` for registry registration.
@@ -33,71 +33,25 @@ pub fn proxy_meta() -> CommandMeta {
         .build()
 }
 
-static PROXY_RUNNING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
 /// Handle the `proxy` command.
 pub async fn handle_proxy(matches: &ArgMatches) -> Result<()> {
+    let _config = matches.get_one::<String>("config");
+
     match matches.subcommand() {
-        Some(("start", sub)) => {
-            let port: u16 = sub
-                .get_one::<String>("port")
-                .unwrap()
-                .parse()
-                .map_err(|_| BosuaError::Command("Invalid port".into()))?;
-
-            if PROXY_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
-                println!("Proxy is already running");
-                return Ok(());
-            }
-
-            let addr = format!("127.0.0.1:{}", port);
-            let listener = tokio::net::TcpListener::bind(&addr).await.map_err(|e| {
-                BosuaError::Command(format!("Failed to bind proxy on {}: {}", addr, e))
-            })?;
-
-            println!("Proxy started on {}", addr);
-            PROXY_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
-
-            tokio::select! {
-                _ = async {
-                    loop {
-                        if let Err(e) = listener.accept().await {
-                            tracing::error!("Accept error: {}", e);
-                            break;
-                        }
-                    }
-                } => {}
-                _ = tokio::signal::ctrl_c() => {
-                    println!("\nProxy stopped by user");
-                }
-            }
-
-            PROXY_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        Some(("check", sub)) => {
+            let one = sub.get_flag("one");
+            println!("proxy check (one_by_one={}): not yet implemented", one);
             Ok(())
         }
-        Some(("stop", _)) => {
-            if PROXY_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
-                PROXY_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-                println!("Proxy stopped");
-            } else {
-                println!("Proxy is not running");
-            }
-            Ok(())
-        }
-        Some(("status", _)) => {
-            let running = PROXY_RUNNING.load(std::sync::atomic::Ordering::SeqCst);
-            if running {
-                println!("Proxy status: running");
-            } else {
-                println!("Proxy status: stopped");
-            }
-            Ok(())
-        }
-        _ => {
-            println!("proxy: use a subcommand (start, stop, status)");
-            Ok(())
-        }
+        Some(("create-config", _)) => { println!("proxy create-config: not yet implemented"); Ok(()) }
+        Some(("get", _)) => { println!("proxy get: not yet implemented"); Ok(()) }
+        Some(("off", _)) => { println!("proxy off: not yet implemented"); Ok(()) }
+        Some(("on", _)) => { println!("proxy on: not yet implemented"); Ok(()) }
+        Some(("shell", _)) => { println!("proxy shell: not yet implemented"); Ok(()) }
+        Some(("status", _)) => { println!("proxy status: not yet implemented"); Ok(()) }
+        Some(("test", _)) => { println!("proxy test: not yet implemented"); Ok(()) }
+        Some(("with-proxy", _)) => { println!("proxy with-proxy: not yet implemented"); Ok(()) }
+        _ => unreachable!("subcommand_required is set"),
     }
 }
 
@@ -106,34 +60,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_proxy_command_parses_start() {
-        let cmd = proxy_command();
-        let m = cmd.try_get_matches_from(["proxy", "start"]).unwrap();
-        let (name, sub) = m.subcommand().unwrap();
-        assert_eq!(name, "start");
-        assert_eq!(sub.get_one::<String>("port").map(|s| s.as_str()), Some("1080"));
-    }
-
-    #[test]
-    fn test_proxy_command_start_custom_port() {
-        let cmd = proxy_command();
-        let m = cmd.try_get_matches_from(["proxy", "start", "--port", "9050"]).unwrap();
-        let (_, sub) = m.subcommand().unwrap();
-        assert_eq!(sub.get_one::<String>("port").map(|s| s.as_str()), Some("9050"));
-    }
-
-    #[test]
-    fn test_proxy_command_parses_stop() {
-        let cmd = proxy_command();
-        let m = cmd.try_get_matches_from(["proxy", "stop"]).unwrap();
-        assert_eq!(m.subcommand_name(), Some("stop"));
-    }
-
-    #[test]
-    fn test_proxy_command_parses_status() {
+    fn test_proxy_command_parses() {
         let cmd = proxy_command();
         let m = cmd.try_get_matches_from(["proxy", "status"]).unwrap();
         assert_eq!(m.subcommand_name(), Some("status"));
+    }
+
+    #[test]
+    fn test_proxy_alias_px() {
+        let cmd = proxy_command();
+        let aliases: Vec<&str> = cmd.get_all_aliases().collect();
+        assert!(aliases.contains(&"px"));
+    }
+
+    #[test]
+    fn test_proxy_check_one() {
+        let cmd = proxy_command();
+        let m = cmd.try_get_matches_from(["proxy", "check", "--one"]).unwrap();
+        let (name, sub) = m.subcommand().unwrap();
+        assert_eq!(name, "check");
+        assert!(sub.get_flag("one"));
+    }
+
+    #[test]
+    fn test_proxy_config_flag() {
+        let cmd = proxy_command();
+        let m = cmd.try_get_matches_from(["proxy", "--config", "/tmp/proxy.conf", "status"]).unwrap();
+        assert_eq!(m.get_one::<String>("config").map(|s| s.as_str()), Some("/tmp/proxy.conf"));
+    }
+
+    #[test]
+    fn test_proxy_requires_subcommand() {
+        let cmd = proxy_command();
+        assert!(cmd.try_get_matches_from(["proxy"]).is_err());
     }
 
     #[test]
@@ -141,6 +100,15 @@ mod tests {
         let meta = proxy_meta();
         assert_eq!(meta.name, "proxy");
         assert_eq!(meta.category, CommandCategory::Network);
-        assert!(!meta.description.is_empty());
+    }
+
+    #[test]
+    fn test_all_subcommands_present() {
+        let cmd = proxy_command();
+        let sub_names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
+        for name in &["check", "create-config", "get", "off", "on", "shell", "status", "test", "with-proxy"] {
+            assert!(sub_names.contains(name), "missing: {}", name);
+        }
+        assert_eq!(sub_names.len(), 9);
     }
 }

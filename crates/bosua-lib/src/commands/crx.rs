@@ -1,6 +1,6 @@
-//! CRX CLI command — Chrome extension utilities.
+//! CRX CLI command — Chrome CRX extension operations.
 //!
-//! Downloads Chrome extensions by ID from the Chrome Web Store.
+//! Subcommands: convert, download.
 
 use clap::{Arg, ArgMatches, Command};
 
@@ -14,17 +14,28 @@ const CRX_DOWNLOAD_URL: &str = "https://clients2.google.com/service/update2/crx?
 /// Build the `crx` clap command.
 pub fn crx_command() -> Command {
     Command::new("crx")
-        .about("Chrome extension utilities")
-        .arg(
-            Arg::new("extension-id")
-                .required(true)
-                .help("Chrome extension ID"),
+        .about("Chrome CRX extension operations")
+        .aliases(["chrome"])
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(
+            Command::new("convert")
+                .about("Convert extension")
+                .aliases(["cv", "c"])
+                .arg(Arg::new("archive").long("archive").action(clap::ArgAction::SetTrue).help("Export xcode project to application"))
+                .arg(Arg::new("install").long("install").action(clap::ArgAction::SetTrue).help("Install after export"))
+                .arg(Arg::new("remove").long("remove").action(clap::ArgAction::SetTrue).help("Remove the source code after convert"))
+                .arg(Arg::new("team").long("team").default_value("Z6322AZ9HJ").help("Developer Account Team ID")),
         )
-        .arg(
-            Arg::new("output")
-                .long("output")
-                .short('o')
-                .help("Output path for downloaded extension"),
+        .subcommand(
+            Command::new("download")
+                .about("Download extension")
+                .aliases(["dl", "d"])
+                .arg(Arg::new("archive").long("archive").action(clap::ArgAction::SetTrue).help("Export xcode project to application"))
+                .arg(Arg::new("convert").long("convert").action(clap::ArgAction::SetTrue).help("Convert after extract"))
+                .arg(Arg::new("extract").long("extract").action(clap::ArgAction::SetTrue).help("Extract after download"))
+                .arg(Arg::new("install").long("install").action(clap::ArgAction::SetTrue).help("Install after export"))
+                .arg(Arg::new("team").long("team").default_value("Z6322AZ9HJ").help("Developer Account Team ID")),
         )
 }
 
@@ -37,48 +48,44 @@ pub fn crx_meta() -> CommandMeta {
 
 /// Handle the `crx` command.
 pub async fn handle_crx(matches: &ArgMatches, http: &HttpClient) -> Result<()> {
-    let ext_id = matches.get_one::<String>("extension-id").unwrap();
-    let output = matches.get_one::<String>("output");
-
-    // Validate extension ID format (32 lowercase letters)
-    if ext_id.len() != 32 || !ext_id.chars().all(|c| c.is_ascii_lowercase()) {
-        return Err(BosuaError::Command(format!(
-            "Invalid extension ID '{}': expected 32 lowercase letters",
-            ext_id
-        )));
+    match matches.subcommand() {
+        Some(("convert", sub)) => handle_convert(sub).await,
+        Some(("download", sub)) => handle_download(sub, http).await,
+        _ => unreachable!("subcommand_required is set"),
     }
+}
 
-    let url = CRX_DOWNLOAD_URL.replace("{EXT_ID}", ext_id);
-    let output_path = output
-        .map(|o| o.to_string())
-        .unwrap_or_else(|| format!("{}.crx", ext_id));
+async fn handle_convert(matches: &ArgMatches) -> Result<()> {
+    let archive = matches.get_flag("archive");
+    let install = matches.get_flag("install");
+    let remove = matches.get_flag("remove");
+    let team = matches.get_one::<String>("team").unwrap();
 
-    println!("Downloading extension: {}", ext_id);
+    println!("Converting extension (team: {})", team);
+    if archive { println!("  Will archive to application"); }
+    if install { println!("  Will install after export"); }
+    if remove { println!("  Will remove source after convert"); }
 
-    let client = http.get_client().await;
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| BosuaError::Command(format!("Failed to download CRX: {}", e)))?;
+    // TODO: implement CRX to Xcode project conversion
+    println!("crx convert: not yet implemented");
+    Ok(())
+}
 
-    if !resp.status().is_success() {
-        return Err(BosuaError::Command(format!(
-            "Failed to download CRX: HTTP {}",
-            resp.status()
-        )));
-    }
+async fn handle_download(matches: &ArgMatches, http: &HttpClient) -> Result<()> {
+    let extract = matches.get_flag("extract");
+    let convert = matches.get_flag("convert");
+    let archive = matches.get_flag("archive");
+    let install = matches.get_flag("install");
+    let _team = matches.get_one::<String>("team").unwrap();
 
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| BosuaError::Command(format!("Failed to read CRX data: {}", e)))?;
+    // TODO: prompt for extension ID or accept as arg
+    println!("crx download: not yet fully implemented");
+    if extract { println!("  Will extract after download"); }
+    if convert { println!("  Will convert after extract"); }
+    if archive { println!("  Will archive to application"); }
+    if install { println!("  Will install after export"); }
 
-    std::fs::write(&output_path, &bytes).map_err(|e| {
-        BosuaError::Command(format!("Failed to write CRX to '{}': {}", output_path, e))
-    })?;
-
-    println!("Downloaded {} bytes to {}", bytes.len(), output_path);
+    let _ = http;
     Ok(())
 }
 
@@ -89,32 +96,42 @@ mod tests {
     #[test]
     fn test_crx_command_parses() {
         let cmd = crx_command();
-        let matches = cmd
-            .try_get_matches_from(["crx", "abcdefghijklmnopqrstuvwxyz"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("extension-id").map(|s| s.as_str()),
-            Some("abcdefghijklmnopqrstuvwxyz"),
-        );
+        let m = cmd.try_get_matches_from(["crx", "download"]).unwrap();
+        assert_eq!(m.subcommand_name(), Some("download"));
     }
 
     #[test]
-    fn test_crx_command_with_output() {
+    fn test_crx_alias_chrome() {
         let cmd = crx_command();
-        let matches = cmd
-            .try_get_matches_from(["crx", "ext123", "--output", "/tmp/ext.crx"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("output").map(|s| s.as_str()),
-            Some("/tmp/ext.crx"),
-        );
+        let aliases: Vec<&str> = cmd.get_all_aliases().collect();
+        assert!(aliases.contains(&"chrome"));
     }
 
     #[test]
-    fn test_crx_requires_extension_id() {
+    fn test_crx_convert_flags() {
         let cmd = crx_command();
-        let result = cmd.try_get_matches_from(["crx"]);
-        assert!(result.is_err());
+        let m = cmd.try_get_matches_from(["crx", "convert", "--archive", "--install", "--remove"]).unwrap();
+        let (name, sub) = m.subcommand().unwrap();
+        assert_eq!(name, "convert");
+        assert!(sub.get_flag("archive"));
+        assert!(sub.get_flag("install"));
+        assert!(sub.get_flag("remove"));
+    }
+
+    #[test]
+    fn test_crx_download_flags() {
+        let cmd = crx_command();
+        let m = cmd.try_get_matches_from(["crx", "download", "--extract", "--convert"]).unwrap();
+        let (name, sub) = m.subcommand().unwrap();
+        assert_eq!(name, "download");
+        assert!(sub.get_flag("extract"));
+        assert!(sub.get_flag("convert"));
+    }
+
+    #[test]
+    fn test_crx_requires_subcommand() {
+        let cmd = crx_command();
+        assert!(cmd.try_get_matches_from(["crx"]).is_err());
     }
 
     #[test]
@@ -122,6 +139,5 @@ mod tests {
         let meta = crx_meta();
         assert_eq!(meta.name, "crx");
         assert_eq!(meta.category, CommandCategory::Utility);
-        assert!(!meta.description.is_empty());
     }
 }

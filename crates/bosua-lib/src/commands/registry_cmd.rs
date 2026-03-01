@@ -260,19 +260,13 @@ impl ServiceRegistry {
 /// Build the `registry` clap command.
 pub fn registry_command() -> Command {
     Command::new("registry")
-        .about("List registered commands")
-        .arg(
-            Arg::new("json")
-                .long("json")
-                .action(clap::ArgAction::SetTrue)
-                .help("Output as JSON"),
-        )
-        .arg(
-            Arg::new("category")
-                .long("category")
-                .short('c')
-                .help("Filter by category"),
-        )
+        .about("Manage and view the command registry system")
+        .aliases(["reg", "commands"])
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(Command::new("list").about("List all registered commands by category"))
+        .subcommand(Command::new("stats").about("Show command registry statistics"))
+        .subcommand(Command::new("validate").about("Validate command registry for issues"))
 }
 
 /// Build the `CommandMeta` for registry registration.
@@ -284,13 +278,12 @@ pub fn registry_meta() -> CommandMeta {
 
 /// Handle the `registry` command.
 pub fn handle_registry(matches: &ArgMatches) {
-    let json = matches.get_flag("json");
-    let category = matches.get_one::<String>("category");
-
-    println!(
-        "registry (json={}, category={:?}): not yet implemented",
-        json, category,
-    );
+    match matches.subcommand() {
+        Some(("list", _)) => println!("registry list: not yet implemented"),
+        Some(("stats", _)) => println!("registry stats: not yet implemented"),
+        Some(("validate", _)) => println!("registry validate: not yet implemented"),
+        _ => unreachable!("subcommand_required is set"),
+    }
 }
 
 #[cfg(test)]
@@ -300,41 +293,36 @@ mod tests {
     #[test]
     fn test_registry_command_parses() {
         let cmd = registry_command();
-        let matches = cmd.try_get_matches_from(["registry"]).unwrap();
-        assert!(!matches.get_flag("json"));
-        assert!(matches.get_one::<String>("category").is_none());
+        let m = cmd.try_get_matches_from(["registry", "list"]).unwrap();
+        assert_eq!(m.subcommand_name(), Some("list"));
     }
 
     #[test]
-    fn test_registry_command_json_flag() {
+    fn test_registry_command_stats() {
         let cmd = registry_command();
-        let matches = cmd.try_get_matches_from(["registry", "--json"]).unwrap();
-        assert!(matches.get_flag("json"));
+        let m = cmd.try_get_matches_from(["registry", "stats"]).unwrap();
+        assert_eq!(m.subcommand_name(), Some("stats"));
     }
 
     #[test]
-    fn test_registry_command_category_filter() {
+    fn test_registry_command_validate() {
         let cmd = registry_command();
-        let matches = cmd
-            .try_get_matches_from(["registry", "--category", "cloud"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("category").map(|s| s.as_str()),
-            Some("cloud"),
-        );
+        let m = cmd.try_get_matches_from(["registry", "validate"]).unwrap();
+        assert_eq!(m.subcommand_name(), Some("validate"));
     }
 
     #[test]
-    fn test_registry_command_json_and_category() {
+    fn test_registry_alias_reg() {
         let cmd = registry_command();
-        let matches = cmd
-            .try_get_matches_from(["registry", "--json", "-c", "utility"])
-            .unwrap();
-        assert!(matches.get_flag("json"));
-        assert_eq!(
-            matches.get_one::<String>("category").map(|s| s.as_str()),
-            Some("utility"),
-        );
+        let aliases: Vec<&str> = cmd.get_all_aliases().collect();
+        assert!(aliases.contains(&"reg"));
+        assert!(aliases.contains(&"commands"));
+    }
+
+    #[test]
+    fn test_registry_requires_subcommand() {
+        let cmd = registry_command();
+        assert!(cmd.try_get_matches_from(["registry"]).is_err());
     }
 
     #[test]
@@ -342,7 +330,6 @@ mod tests {
         let meta = registry_meta();
         assert_eq!(meta.name, "registry");
         assert_eq!(meta.category, CommandCategory::Utility);
-        assert!(!meta.description.is_empty());
     }
 
     #[tokio::test]

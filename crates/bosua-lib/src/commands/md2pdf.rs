@@ -13,23 +13,23 @@ use crate::utils::run_external_tool;
 /// Build the `md2pdf` clap command.
 pub fn md2pdf_command() -> Command {
     Command::new("md2pdf")
-        .about("Markdown to PDF conversion")
+        .about("Convert Markdown files to PDF format with beautiful styling")
+        .aliases(["mdpdf", "markdown"])
         .arg(
             Arg::new("input")
                 .required(true)
                 .help("Input Markdown file"),
         )
         .arg(
+            Arg::new("css")
+                .long("css")
+                .help("Custom CSS file for styling"),
+        )
+        .arg(
             Arg::new("output")
                 .long("output")
                 .short('o')
-                .help("Output PDF file path"),
-        )
-        .arg(
-            Arg::new("template")
-                .long("template")
-                .short('t')
-                .help("PDF template to use"),
+                .help("Output PDF file (default: same name as input with .pdf extension)"),
         )
 }
 
@@ -62,9 +62,9 @@ pub async fn handle_md2pdf(matches: &ArgMatches) -> Result<()> {
 
     let mut args = vec![input.as_str(), "-o", output.as_str()];
 
-    if let Some(template) = matches.get_one::<String>("template") {
-        args.push("--template");
-        args.push(template.as_str());
+    if let Some(css) = matches.get_one::<String>("css") {
+        args.push("--css");
+        args.push(css.as_str());
     }
 
     run_external_tool("pandoc", &args).await?;
@@ -84,34 +84,21 @@ mod tests {
     fn test_md2pdf_command_parses_input() {
         let cmd = md2pdf_command();
         let matches = cmd.try_get_matches_from(["md2pdf", "README.md"]).unwrap();
-        assert_eq!(
-            matches.get_one::<String>("input").map(|s| s.as_str()),
-            Some("README.md"),
-        );
+        assert_eq!(matches.get_one::<String>("input").map(|s| s.as_str()), Some("README.md"));
     }
 
     #[test]
     fn test_md2pdf_with_output() {
         let cmd = md2pdf_command();
-        let matches = cmd
-            .try_get_matches_from(["md2pdf", "README.md", "--output", "out.pdf"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("output").map(|s| s.as_str()),
-            Some("out.pdf"),
-        );
+        let matches = cmd.try_get_matches_from(["md2pdf", "README.md", "--output", "out.pdf"]).unwrap();
+        assert_eq!(matches.get_one::<String>("output").map(|s| s.as_str()), Some("out.pdf"));
     }
 
     #[test]
-    fn test_md2pdf_with_template() {
+    fn test_md2pdf_with_css() {
         let cmd = md2pdf_command();
-        let matches = cmd
-            .try_get_matches_from(["md2pdf", "README.md", "--template", "academic"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("template").map(|s| s.as_str()),
-            Some("academic"),
-        );
+        let matches = cmd.try_get_matches_from(["md2pdf", "README.md", "--css", "custom.css"]).unwrap();
+        assert_eq!(matches.get_one::<String>("css").map(|s| s.as_str()), Some("custom.css"));
     }
 
     #[test]
@@ -126,6 +113,13 @@ mod tests {
         let meta = md2pdf_meta();
         assert_eq!(meta.name, "md2pdf");
         assert_eq!(meta.category, CommandCategory::Developer);
-        assert!(!meta.description.is_empty());
+    }
+
+    #[test]
+    fn test_md2pdf_aliases() {
+        let cmd = md2pdf_command();
+        let aliases: Vec<&str> = cmd.get_all_aliases().collect();
+        assert!(aliases.contains(&"mdpdf"));
+        assert!(aliases.contains(&"markdown"));
     }
 }

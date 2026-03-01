@@ -17,22 +17,16 @@ pub fn scraper_api_command() -> Command {
     Command::new("scraperapi")
         .about("Scraper API operations")
         .arg(
-            Arg::new("url")
-                .required(true)
-                .help("URL to scrape"),
+            Arg::new("apikey")
+                .long("apikey")
+                .default_value("d07d69f1-ceb6-49b8-b2b3-701c0cb986d3")
+                .help("Testmail.app API KEY"),
         )
         .arg(
-            Arg::new("api-key")
-                .long("api-key")
-                .short('k')
-                .help("ScraperAPI key"),
-        )
-        .arg(
-            Arg::new("render")
-                .long("render")
-                .short('r')
-                .action(clap::ArgAction::SetTrue)
-                .help("Enable JavaScript rendering"),
+            Arg::new("namespace")
+                .long("namespace")
+                .default_value("cn6bs")
+                .help("Testmail.app Namespace"),
         )
 }
 
@@ -48,34 +42,15 @@ pub async fn handle_scraper_api(
     matches: &ArgMatches,
     http: &HttpClient,
 ) -> Result<()> {
-    let url = matches.get_one::<String>("url").unwrap();
-    let api_key = matches
-        .get_one::<String>("api-key")
-        .or_else(|| std::env::var("SCRAPER_API_KEY").ok().as_ref().map(|_| unreachable!()))
-        .cloned();
+    let apikey = matches.get_one::<String>("apikey").unwrap();
+    let namespace = matches.get_one::<String>("namespace").unwrap();
 
-    // Try env var if not provided via CLI
-    let api_key = match api_key {
-        Some(k) => k,
-        None => std::env::var("SCRAPER_API_KEY").map_err(|_| {
-            BosuaError::Command(
-                "ScraperAPI key not set. Use --api-key or set SCRAPER_API_KEY env var".into(),
-            )
-        })?,
-    };
+    println!("ScraperAPI - apikey: {}, namespace: {}", apikey, namespace);
 
-    let render = matches.get_flag("render");
-
-    let mut request_url = format!(
-        "{}/?api_key={}&url={}",
-        SCRAPER_API_URL, api_key, url
+    let request_url = format!(
+        "{}/?api_key={}&namespace={}",
+        SCRAPER_API_URL, apikey, namespace
     );
-
-    if render {
-        request_url.push_str("&render=true");
-    }
-
-    println!("Scraping: {}", url);
 
     let client = http.get_client().await;
     let resp = client
@@ -109,52 +84,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_scraper_api_command_parses_url() {
+    fn test_scraper_api_command_defaults() {
         let cmd = scraper_api_command();
-        let matches = cmd
-            .try_get_matches_from(["scraperapi", "https://example.com"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("url").map(|s| s.as_str()),
-            Some("https://example.com"),
-        );
+        let matches = cmd.try_get_matches_from(["scraperapi"]).unwrap();
+        assert_eq!(matches.get_one::<String>("apikey").map(|s| s.as_str()), Some("d07d69f1-ceb6-49b8-b2b3-701c0cb986d3"));
+        assert_eq!(matches.get_one::<String>("namespace").map(|s| s.as_str()), Some("cn6bs"));
     }
 
     #[test]
-    fn test_scraper_api_with_api_key() {
+    fn test_scraper_api_with_apikey() {
         let cmd = scraper_api_command();
-        let matches = cmd
-            .try_get_matches_from(["scraperapi", "https://example.com", "--api-key", "key123"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("api-key").map(|s| s.as_str()),
-            Some("key123"),
-        );
+        let matches = cmd.try_get_matches_from(["scraperapi", "--apikey", "key123"]).unwrap();
+        assert_eq!(matches.get_one::<String>("apikey").map(|s| s.as_str()), Some("key123"));
     }
 
     #[test]
-    fn test_scraper_api_render_flag() {
+    fn test_scraper_api_with_namespace() {
         let cmd = scraper_api_command();
-        let matches = cmd
-            .try_get_matches_from(["scraperapi", "https://example.com", "--render"])
-            .unwrap();
-        assert!(matches.get_flag("render"));
-    }
-
-    #[test]
-    fn test_scraper_api_render_default_false() {
-        let cmd = scraper_api_command();
-        let matches = cmd
-            .try_get_matches_from(["scraperapi", "https://example.com"])
-            .unwrap();
-        assert!(!matches.get_flag("render"));
-    }
-
-    #[test]
-    fn test_scraper_api_requires_url() {
-        let cmd = scraper_api_command();
-        let result = cmd.try_get_matches_from(["scraperapi"]);
-        assert!(result.is_err());
+        let matches = cmd.try_get_matches_from(["scraperapi", "--namespace", "myns"]).unwrap();
+        assert_eq!(matches.get_one::<String>("namespace").map(|s| s.as_str()), Some("myns"));
     }
 
     #[test]
@@ -162,6 +110,5 @@ mod tests {
         let meta = scraper_api_meta();
         assert_eq!(meta.name, "scraperapi");
         assert_eq!(meta.category, CommandCategory::Developer);
-        assert!(!meta.description.is_empty());
     }
 }

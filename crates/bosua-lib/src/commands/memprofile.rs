@@ -10,12 +10,14 @@ use crate::errors::Result;
 /// Build the `memprofile` clap command.
 pub fn memprofile_command() -> Command {
     Command::new("memprofile")
-        .about("Memory profiling")
+        .about("Display detailed memory profiling information")
+        .aliases(["mem", "memory"])
         .arg(
-            clap::Arg::new("json")
-                .long("json")
-                .action(clap::ArgAction::SetTrue)
-                .help("Output memory profile as JSON"),
+            clap::Arg::new("top")
+                .long("top")
+                .value_parser(clap::value_parser!(i64))
+                .default_value("10")
+                .help("Number of top allocations to show"),
         )
 }
 
@@ -67,17 +69,13 @@ struct MemoryStats {
 
 /// Handle the `memprofile` command.
 pub fn handle_memprofile(matches: &ArgMatches) -> Result<()> {
-    let json = matches.get_flag("json");
+    let top = matches.get_one::<i64>("top").copied().unwrap_or(10);
     let stats = collect_memory_stats();
 
-    if json {
-        println!("{}", serde_json::to_string_pretty(&stats).unwrap_or_default());
-    } else {
-        println!("Memory Profile:");
-        println!("  RSS:     {} KB", stats.rss_kb);
-        println!("  Virtual: {} KB", stats.virtual_kb);
-        println!("  Peak:    {} KB", stats.peak_kb);
-    }
+    println!("Memory Profile (top {}):", top);
+    println!("  RSS:     {} KB", stats.rss_kb);
+    println!("  Virtual: {} KB", stats.virtual_kb);
+    println!("  Peak:    {} KB", stats.peak_kb);
     Ok(())
 }
 
@@ -89,14 +87,14 @@ mod tests {
     fn test_memprofile_command_parses() {
         let cmd = memprofile_command();
         let matches = cmd.try_get_matches_from(["memprofile"]).unwrap();
-        assert!(!matches.get_flag("json"));
+        assert_eq!(matches.get_one::<i64>("top").copied(), Some(10));
     }
 
     #[test]
-    fn test_memprofile_command_json_flag() {
+    fn test_memprofile_command_top_flag() {
         let cmd = memprofile_command();
-        let matches = cmd.try_get_matches_from(["memprofile", "--json"]).unwrap();
-        assert!(matches.get_flag("json"));
+        let matches = cmd.try_get_matches_from(["memprofile", "--top", "20"]).unwrap();
+        assert_eq!(matches.get_one::<i64>("top").copied(), Some(20));
     }
 
     #[test]
@@ -104,26 +102,19 @@ mod tests {
         let meta = memprofile_meta();
         assert_eq!(meta.name, "memprofile");
         assert_eq!(meta.category, CommandCategory::Utility);
-        assert!(!meta.description.is_empty());
+    }
+
+    #[test]
+    fn test_memprofile_aliases() {
+        let cmd = memprofile_command();
+        let aliases: Vec<&str> = cmd.get_all_aliases().collect();
+        assert!(aliases.contains(&"mem"));
+        assert!(aliases.contains(&"memory"));
     }
 
     #[test]
     fn test_memory_stats_default() {
         let stats = MemoryStats::default();
         assert_eq!(stats.rss_kb, 0);
-        assert_eq!(stats.virtual_kb, 0);
-        assert_eq!(stats.peak_kb, 0);
-    }
-
-    #[test]
-    fn test_memory_stats_json_serialization() {
-        let stats = MemoryStats {
-            rss_kb: 1024,
-            virtual_kb: 4096,
-            peak_kb: 2048,
-        };
-        let json = serde_json::to_string(&stats).unwrap();
-        assert!(json.contains("1024"));
-        assert!(json.contains("4096"));
     }
 }

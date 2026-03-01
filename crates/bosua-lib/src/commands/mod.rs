@@ -33,6 +33,7 @@ pub mod proxy;
 pub mod registry_cmd;
 pub mod scraper_api;
 pub mod search;
+pub mod serve;
 pub mod sms_activate;
 pub mod tailscale;
 pub mod testmail;
@@ -156,12 +157,7 @@ pub fn register_macos_commands(registry: &mut CommandRegistry) {
         .register(gcloud::gcloud_meta())
         .expect("failed to register gcloud command");
     registry
-        .register(
-            CommandBuilder::new("serve")
-                .category(CommandCategory::Core)
-                .description("Start secure HTTP server (Linux only)")
-                .build(),
-        )
+        .register(serve::serve_meta())
         .expect("failed to register serve command");
     registry
         .register(vmf::vmf_meta())
@@ -241,12 +237,7 @@ pub fn register_linux_commands(registry: &mut CommandRegistry) {
         .register(gdrive_sync::gdrive_sync_meta())
         .expect("failed to register gdrive-sync command");
     registry
-        .register(
-            CommandBuilder::new("serve")
-                .category(CommandCategory::Core)
-                .description("Start secure HTTP server (Linux only)")
-                .build(),
-        )
+        .register(serve::serve_meta())
         .expect("failed to register serve command");
     registry
         .register(onflix::onflix_meta())
@@ -290,12 +281,7 @@ pub fn register_gcp_commands(registry: &mut CommandRegistry) {
         .register(gcp::gcp_meta())
         .expect("failed to register gcp command");
     registry
-        .register(
-            CommandBuilder::new("serve")
-                .category(CommandCategory::Core)
-                .description("Start secure HTTP server (Linux only)")
-                .build(),
-        )
+        .register(serve::serve_meta())
         .expect("failed to register serve command");
     registry
         .register(onflix::onflix_meta())
@@ -334,7 +320,7 @@ pub async fn dispatch_command(
         "aria2" => {
             aria2_cmd::handle_aria2(matches, services.aria2().await?.as_ref()).await?
         }
-        "bitcoin" => bitcoin::handle_bitcoin(matches)?,
+        "bitcoin" => bitcoin::handle_bitcoin(matches, &services.http_client).await?,
         "crx" => crx::handle_crx(matches, &services.http_client).await?,
         "download" => {
             download::handle_download(
@@ -363,9 +349,7 @@ pub async fn dispatch_command(
             let config = services.config_manager.get_config().await;
             gcloud::handle_gcloud(matches, &config).await?
         }
-        "serve" => {
-            println!("serve: not yet implemented");
-        }
+        "serve" => serve::handle_serve(matches).await?,
         "vmf" => vmf::handle_vmf(matches)?,
         "tailscale" => tailscale::handle_tailscale(matches, services.tailscale().await?.as_ref()).await?,
         "medium" => {

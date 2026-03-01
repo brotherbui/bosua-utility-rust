@@ -199,7 +199,7 @@ fn tunnel_subcommand() -> Command {
         .about("Manage Zero Trust tunnels")
         .subcommand(
             Command::new("add")
-                .aliases(["create", "a", "c"])
+                .aliases(["create", "a"])
                 .about("Create a new tunnel")
                 .arg(Arg::new("name").required(true).help("Tunnel name")),
         )

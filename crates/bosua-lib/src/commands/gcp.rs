@@ -16,9 +16,10 @@ use crate::output;
 /// Build the `gcp` clap command with all subcommands.
 pub fn gcp_command() -> Command {
     Command::new("gcp")
-        .about("Google Cloud Platform operations")
+        .about("GCP stuffs")
         .subcommand_required(true)
         .arg_required_else_help(true)
+        .arg(Arg::new("ip").long("ip").help("GCP server IP address (overrides GCP_IP environment variable)"))
         .subcommand(browse_subcommand())
         .subcommand(download_subcommand())
         .subcommand(list_subcommand())
@@ -57,71 +58,60 @@ pub async fn handle_gcp(
 
 fn browse_subcommand() -> Command {
     Command::new("browse")
-        .about("Browse files on a GCP VM")
-        .arg(
-            Arg::new("path")
-                .long("path")
-                .short('p')
-                .help("Remote path to browse (defaults to home directory)"),
-        )
+        .about("Interactive remote file browser (type 'help' for commands)")
+        .arg(Arg::new("host").long("host").default_value("localhost").help("Host"))
+        .arg(Arg::new("pass").long("pass").default_value("conchimnon").help("Password"))
+        .arg(Arg::new("path").long("path").short('p').help("Start path"))
+        .arg(Arg::new("player").long("player").default_value("kodi").help("Player name"))
+        .arg(Arg::new("port").long("port").default_value("6868").help("Port"))
+        .arg(Arg::new("user").long("user").short('u').default_value("kodi").help("User"))
 }
 
 fn download_subcommand() -> Command {
     Command::new("download")
-        .about("Download a file from a GCP VM")
-        .arg(
-            Arg::new("remote-path")
-                .required(true)
-                .help("Remote file path to download"),
-        )
-        .arg(
-            Arg::new("output")
-                .long("output")
-                .short('o')
-                .help("Local output file path"),
-        )
+        .about("Download files from remote server with resumable support")
+        .aliases(["dl", "d"])
+        .arg(Arg::new("file_path_or_pattern").num_args(0..).help("File path or pattern"))
 }
 
 fn list_subcommand() -> Command {
     Command::new("list")
-        .about("List files on a GCP VM")
-        .arg(
-            Arg::new("path")
-                .long("path")
-                .short('p')
-                .help("Remote path to list (defaults to home directory)"),
-        )
+        .about("List remote files from server (/list-files)")
+        .aliases(["ls"])
+        .arg(Arg::new("json").long("json").action(clap::ArgAction::SetTrue).help("Output as JSON for machine-readable parsing"))
+        .arg(Arg::new("path").long("path").help("Remote subdirectory to list (relative to Downloads)"))
 }
 
 fn play_subcommand() -> Command {
     Command::new("play")
-        .about("Play media from a GCP VM")
-        .arg(
-            Arg::new("remote-path")
-                .required(true)
-                .help("Remote file path to play"),
+        .about("Play remote files using VLC or Kodi")
+        .arg(Arg::new("file_pattern").help("File pattern"))
+        .arg(Arg::new("host").long("host").default_value("localhost").help("Host"))
+        .arg(Arg::new("pass").long("pass").default_value("conchimnon").help("Password"))
+        .arg(Arg::new("player").long("player").default_value("kodi").help("Player name"))
+        .arg(Arg::new("port").long("port").default_value("6868").help("Port"))
+        .arg(Arg::new("user").long("user").short('u').default_value("kodi").help("User"))
+        .subcommand(
+            Command::new("all")
+                .about("Play all videos from directories matching the search terms")
+                .arg(Arg::new("terms").num_args(0..).help("Search terms")),
         )
-        .arg(
-            Arg::new("player")
-                .long("player")
-                .default_value("mpv")
-                .help("Media player to use"),
+        .subcommand(
+            Command::new("file")
+                .about("Play a single remote file by matching folder and file names")
+                .arg(Arg::new("terms").num_args(0..).help("folder_term file_term")),
         )
 }
 
 fn push_subcommand() -> Command {
     Command::new("push")
-        .about("Push (upload) a file to a GCP VM")
-        .arg(
-            Arg::new("local-path")
-                .required(true)
-                .help("Local file path to upload"),
-        )
-        .arg(
-            Arg::new("remote-path")
-                .required(true)
-                .help("Remote destination path"),
-        )
+        .about("Push links/files to GCP remote")
+        .arg(Arg::new("folder").long("folder").help("Download folder name"))
+        .arg(Arg::new("gdriveid").long("gdriveid").help("Gdrive ID"))
+        .arg(Arg::new("path").long("path").help("Remote path (default to Downloads directory)"))
+        .subcommand(Command::new("file").about("Push files to GCP remote"))
+        .subcommand(Command::new("folder-scan").about("Push Fshare folders to remote for scanning"))
+        .subcommand(Command::new("link").about("Push links to GCP remote"))
 }
 
 // ---------------------------------------------------------------------------
@@ -235,68 +225,61 @@ mod tests {
     }
 
     #[test]
-    fn test_gcp_browse_with_path() {
+    fn test_gcp_ip_flag() {
+        let cmd = gcp_command();
+        let matches = cmd.try_get_matches_from(["gcp", "--ip", "10.0.0.1", "list"]).unwrap();
+        assert_eq!(matches.get_one::<String>("ip").map(|s| s.as_str()), Some("10.0.0.1"));
+    }
+
+    #[test]
+    fn test_gcp_browse_with_kodi_flags() {
         let cmd = gcp_command();
         let matches = cmd
-            .try_get_matches_from(["gcp", "browse", "--path", "/home/user"])
+            .try_get_matches_from(["gcp", "browse", "--host", "192.168.1.1", "--port", "9090"])
             .unwrap();
         let (name, sub) = matches.subcommand().unwrap();
         assert_eq!(name, "browse");
-        assert_eq!(
-            sub.get_one::<String>("path").map(|s| s.as_str()),
-            Some("/home/user"),
-        );
+        assert_eq!(sub.get_one::<String>("host").map(|s| s.as_str()), Some("192.168.1.1"));
+        assert_eq!(sub.get_one::<String>("port").map(|s| s.as_str()), Some("9090"));
     }
 
     #[test]
-    fn test_gcp_download_subcommand() {
+    fn test_gcp_download_alias() {
         let cmd = gcp_command();
-        let matches = cmd
-            .try_get_matches_from(["gcp", "download", "/remote/file.txt", "-o", "/local/file.txt"])
-            .unwrap();
-        let (_, sub) = matches.subcommand().unwrap();
-        assert_eq!(
-            sub.get_one::<String>("remote-path").map(|s| s.as_str()),
-            Some("/remote/file.txt"),
-        );
-        assert_eq!(
-            sub.get_one::<String>("output").map(|s| s.as_str()),
-            Some("/local/file.txt"),
-        );
+        let matches = cmd.try_get_matches_from(["gcp", "dl"]).unwrap();
+        assert_eq!(matches.subcommand_name(), Some("download"));
     }
 
     #[test]
-    fn test_gcp_play_subcommand() {
+    fn test_gcp_list_json_flag() {
         let cmd = gcp_command();
-        let matches = cmd
-            .try_get_matches_from(["gcp", "play", "/media/video.mp4", "--player", "vlc"])
-            .unwrap();
+        let matches = cmd.try_get_matches_from(["gcp", "list", "--json"]).unwrap();
         let (_, sub) = matches.subcommand().unwrap();
-        assert_eq!(
-            sub.get_one::<String>("remote-path").map(|s| s.as_str()),
-            Some("/media/video.mp4"),
-        );
-        assert_eq!(
-            sub.get_one::<String>("player").map(|s| s.as_str()),
-            Some("vlc"),
-        );
+        assert!(sub.get_flag("json"));
     }
 
     #[test]
-    fn test_gcp_push_subcommand() {
+    fn test_gcp_list_path_flag() {
         let cmd = gcp_command();
-        let matches = cmd
-            .try_get_matches_from(["gcp", "push", "/local/file.txt", "/remote/file.txt"])
-            .unwrap();
+        let matches = cmd.try_get_matches_from(["gcp", "list", "--path", "movies"]).unwrap();
         let (_, sub) = matches.subcommand().unwrap();
-        assert_eq!(
-            sub.get_one::<String>("local-path").map(|s| s.as_str()),
-            Some("/local/file.txt"),
-        );
-        assert_eq!(
-            sub.get_one::<String>("remote-path").map(|s| s.as_str()),
-            Some("/remote/file.txt"),
-        );
+        assert_eq!(sub.get_one::<String>("path").map(|s| s.as_str()), Some("movies"));
+    }
+
+    #[test]
+    fn test_gcp_play_subcommands() {
+        let cmd = gcp_command();
+        let matches = cmd.try_get_matches_from(["gcp", "play", "all", "movie"]).unwrap();
+        let (_, play_sub) = matches.subcommand().unwrap();
+        assert_eq!(play_sub.subcommand_name(), Some("all"));
+    }
+
+    #[test]
+    fn test_gcp_push_subcommands() {
+        let cmd = gcp_command();
+        let matches = cmd.try_get_matches_from(["gcp", "push", "link"]).unwrap();
+        let (_, push_sub) = matches.subcommand().unwrap();
+        assert_eq!(push_sub.subcommand_name(), Some("link"));
     }
 
     #[test]

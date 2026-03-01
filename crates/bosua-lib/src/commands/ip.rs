@@ -11,10 +11,10 @@ use crate::http_client::HttpClient;
 /// Build the `ip` clap command.
 pub fn ip_command() -> Command {
     Command::new("ip")
-        .about("IP address utilities")
-        .subcommand(Command::new("local").about("Show local IP address"))
-        .subcommand(Command::new("public").about("Show public IP address"))
-        .subcommand(Command::new("geo").about("Geolocate an IP address"))
+        .about("IP stuffs")
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(Command::new("info").about("Get current public IP info"))
 }
 
 /// Build the `CommandMeta` for registry registration.
@@ -28,44 +28,17 @@ pub fn ip_meta() -> CommandMeta {
 /// Handle the `ip` command.
 pub async fn handle_ip(matches: &ArgMatches, http: &HttpClient) -> Result<(), BosuaError> {
     match matches.subcommand() {
-        Some(("local", _)) => {
-            // Use UDP socket trick to detect local IP (no actual data is sent)
-            let socket = std::net::UdpSocket::bind("0.0.0.0:0")
-                .map_err(|e| BosuaError::Command(format!("Failed to create socket: {}", e)))?;
-            socket
-                .connect("8.8.8.8:80")
-                .map_err(|e| BosuaError::Command(format!("Failed to detect local IP: {}", e)))?;
-            let local_addr = socket
-                .local_addr()
-                .map_err(|e| BosuaError::Command(format!("Failed to get local address: {}", e)))?;
-            println!("{}", local_addr.ip());
-            Ok(())
-        }
-        Some(("public", _)) => {
-            let client = http.get_client().await;
-            let resp = client
-                .get("https://api.ipify.org")
-                .send()
-                .await
-                .map_err(|e| BosuaError::Command(format!("Failed to query public IP: {}", e)))?;
-            let ip = resp
-                .text()
-                .await
-                .map_err(|e| BosuaError::Command(format!("Failed to read response: {}", e)))?;
-            println!("{}", ip.trim());
-            Ok(())
-        }
-        Some(("geo", _)) => {
+        Some(("info", _)) => {
             let client = http.get_client().await;
             let resp = client
                 .get("https://ipinfo.io/json")
                 .send()
                 .await
-                .map_err(|e| BosuaError::Command(format!("Failed to query geolocation: {}", e)))?;
+                .map_err(|e| BosuaError::Command(format!("Failed to query IP info: {}", e)))?;
             let body: serde_json::Value = resp
                 .json()
                 .await
-                .map_err(|e| BosuaError::Command(format!("Failed to parse geolocation: {}", e)))?;
+                .map_err(|e| BosuaError::Command(format!("Failed to parse response: {}", e)))?;
 
             if let Some(ip) = body.get("ip").and_then(|v| v.as_str()) {
                 println!("IP:       {}", ip);
@@ -90,10 +63,7 @@ pub async fn handle_ip(matches: &ArgMatches, http: &HttpClient) -> Result<(), Bo
             }
             Ok(())
         }
-        _ => {
-            println!("ip: use a subcommand (local, public, geo)");
-            Ok(())
-        }
+        _ => unreachable!("subcommand_required is set"),
     }
 }
 
@@ -102,24 +72,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ip_command_parses_local() {
+    fn test_ip_command_parses_info() {
         let cmd = ip_command();
-        let matches = cmd.try_get_matches_from(["ip", "local"]).unwrap();
-        assert_eq!(matches.subcommand_name(), Some("local"));
+        let m = cmd.try_get_matches_from(["ip", "info"]).unwrap();
+        assert_eq!(m.subcommand_name(), Some("info"));
     }
 
     #[test]
-    fn test_ip_command_parses_public() {
+    fn test_ip_requires_subcommand() {
         let cmd = ip_command();
-        let matches = cmd.try_get_matches_from(["ip", "public"]).unwrap();
-        assert_eq!(matches.subcommand_name(), Some("public"));
-    }
-
-    #[test]
-    fn test_ip_command_parses_geo() {
-        let cmd = ip_command();
-        let matches = cmd.try_get_matches_from(["ip", "geo"]).unwrap();
-        assert_eq!(matches.subcommand_name(), Some("geo"));
+        assert!(cmd.try_get_matches_from(["ip"]).is_err());
     }
 
     #[test]
@@ -127,6 +89,5 @@ mod tests {
         let meta = ip_meta();
         assert_eq!(meta.name, "ip");
         assert_eq!(meta.category, CommandCategory::Utility);
-        assert!(!meta.description.is_empty());
     }
 }

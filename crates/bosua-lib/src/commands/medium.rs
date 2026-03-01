@@ -13,17 +13,46 @@ use crate::http_client::HttpClient;
 /// Build the `medium` clap command.
 pub fn medium_command() -> Command {
     Command::new("medium")
-        .about("Medium article access")
+        .about("Medium PDF generator")
+        .aliases(["m", "me"])
         .arg(
             Arg::new("url")
                 .required(true)
-                .help("Medium article URL"),
+                .help("Medium article URL or search terms"),
         )
         .arg(
             Arg::new("domain")
                 .long("domain")
-                .short('d')
-                .help("Override MediumPremiumDomain from DynamicConfig"),
+                .default_value("freedium.cfd")
+                .help("Premium domain"),
+        )
+        .arg(
+            Arg::new("file")
+                .long("file")
+                .help("Input file"),
+        )
+        .arg(
+            Arg::new("output")
+                .long("output")
+                .help("Output directory"),
+        )
+        .arg(
+            Arg::new("pdf")
+                .long("pdf")
+                .action(clap::ArgAction::SetTrue)
+                .help("Generate PDF instead of HTML (default: HTML for faster generation)"),
+        )
+        .arg(
+            Arg::new("scraperapi")
+                .long("scraperapi")
+                .help("User Scraper API"),
+        )
+        .arg(
+            Arg::new("worker")
+                .long("worker")
+                .value_parser(clap::value_parser!(i64))
+                .default_value("5")
+                .help("Number of workers"),
         )
 }
 
@@ -59,7 +88,7 @@ pub async fn handle_medium(
     let domain = matches
         .get_one::<String>("domain")
         .map(|s| s.as_str())
-        .unwrap_or(&config.medium_premium_domain);
+        .unwrap_or("freedium.cfd");
 
     let rewritten = rewrite_url(url, domain)?;
     println!("Fetching article via: {}", rewritten);
@@ -113,30 +142,36 @@ mod tests {
     #[test]
     fn test_medium_command_parses_url() {
         let cmd = medium_command();
-        let matches = cmd
-            .try_get_matches_from(["medium", "https://medium.com/@user/article-123"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("url").map(|s| s.as_str()),
-            Some("https://medium.com/@user/article-123"),
-        );
+        let matches = cmd.try_get_matches_from(["medium", "https://medium.com/@user/article-123"]).unwrap();
+        assert_eq!(matches.get_one::<String>("url").map(|s| s.as_str()), Some("https://medium.com/@user/article-123"));
+    }
+
+    #[test]
+    fn test_medium_default_domain() {
+        let cmd = medium_command();
+        let matches = cmd.try_get_matches_from(["medium", "https://medium.com/@user/article"]).unwrap();
+        assert_eq!(matches.get_one::<String>("domain").map(|s| s.as_str()), Some("freedium.cfd"));
     }
 
     #[test]
     fn test_medium_with_domain_override() {
         let cmd = medium_command();
-        let matches = cmd
-            .try_get_matches_from([
-                "medium",
-                "https://medium.com/@user/article-123",
-                "--domain",
-                "freedium.cfd",
-            ])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("domain").map(|s| s.as_str()),
-            Some("freedium.cfd"),
-        );
+        let matches = cmd.try_get_matches_from(["medium", "https://medium.com/@user/article", "--domain", "other.cfd"]).unwrap();
+        assert_eq!(matches.get_one::<String>("domain").map(|s| s.as_str()), Some("other.cfd"));
+    }
+
+    #[test]
+    fn test_medium_pdf_flag() {
+        let cmd = medium_command();
+        let matches = cmd.try_get_matches_from(["medium", "https://medium.com/@user/article", "--pdf"]).unwrap();
+        assert!(matches.get_flag("pdf"));
+    }
+
+    #[test]
+    fn test_medium_worker_flag() {
+        let cmd = medium_command();
+        let matches = cmd.try_get_matches_from(["medium", "https://medium.com/@user/article", "--worker", "10"]).unwrap();
+        assert_eq!(matches.get_one::<i64>("worker").copied(), Some(10));
     }
 
     #[test]
@@ -151,20 +186,25 @@ mod tests {
         let meta = medium_meta();
         assert_eq!(meta.name, "medium");
         assert_eq!(meta.category, CommandCategory::Developer);
-        assert!(!meta.description.is_empty());
+    }
+
+    #[test]
+    fn test_medium_aliases() {
+        let cmd = medium_command();
+        let aliases: Vec<&str> = cmd.get_all_aliases().collect();
+        assert!(aliases.contains(&"m"));
+        assert!(aliases.contains(&"me"));
     }
 
     #[test]
     fn test_rewrite_url_basic() {
         let result = rewrite_url("https://medium.com/@user/my-article-123", "freedium.cfd");
-        assert!(result.is_ok());
         assert_eq!(result.unwrap(), "https://freedium.cfd/@user/my-article-123");
     }
 
     #[test]
     fn test_rewrite_url_http() {
         let result = rewrite_url("http://medium.com/@user/article", "freedium.cfd");
-        assert!(result.is_ok());
         assert_eq!(result.unwrap(), "https://freedium.cfd/@user/article");
     }
 

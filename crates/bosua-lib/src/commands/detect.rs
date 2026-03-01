@@ -10,11 +10,34 @@ use crate::errors::{BosuaError, Result};
 /// Build the `detect` clap command.
 pub fn detect_command() -> Command {
     Command::new("detect")
-        .about("File type detection")
+        .about("Analyze an executable binary to determine what programming language was used to build it.\nSupports detection of: Go, Rust, Swift, C/C++, Objective-C, Java, .NET, Node.js, and more.\n\nUses advanced signature-based detection with heuristic scoring for improved accuracy.\n\nBy default, shows a concise summary. Use --full for detailed analysis or --json for machine-readable output.")
+        .aliases(["det"])
         .arg(
             Arg::new("file")
                 .required(true)
-                .help("File to detect type for"),
+                .help("Executable path to analyze"),
+        )
+        .arg(
+            Arg::new("full")
+                .long("full")
+                .short('f')
+                .action(clap::ArgAction::SetTrue)
+                .help("Show full detailed analysis"),
+        )
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .short('j')
+                .action(clap::ArgAction::SetTrue)
+                .help("Output results in JSON format"),
+        )
+        .arg(
+            Arg::new("signatures")
+                .long("signatures")
+                .short('s')
+                .action(clap::ArgAction::SetTrue)
+                .default_value("true")
+                .help("Use signature-based detection (default: true)"),
         )
 }
 

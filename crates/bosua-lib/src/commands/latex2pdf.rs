@@ -14,25 +14,42 @@ use crate::utils::run_external_tool;
 /// Build the `latex2pdf` clap command.
 pub fn latex2pdf_command() -> Command {
     Command::new("latex2pdf")
-        .about("LaTeX to PDF conversion")
+        .about("Convert LaTeX files to PDF format")
+        .aliases(["tex2pdf", "latexpdf"])
         .arg(
             Arg::new("input")
                 .required(true)
                 .help("Input LaTeX file"),
         )
         .arg(
-            Arg::new("output")
-                .long("output")
-                .short('o')
-                .help("Output PDF file path"),
+            Arg::new("css")
+                .long("css")
+                .help("Custom CSS file for styling (local mode only)"),
         )
         .arg(
             Arg::new("engine")
                 .long("engine")
-                .short('e')
-                .value_parser(["pdflatex", "xelatex", "lualatex"])
-                .default_value("pdflatex")
-                .help("LaTeX engine (pdflatex, xelatex, lualatex)"),
+                .value_parser(["auto", "pdflatex", "xelatex", "lualatex"])
+                .default_value("auto")
+                .help("LaTeX engine: auto, pdflatex, xelatex, lualatex"),
+        )
+        .arg(
+            Arg::new("local")
+                .long("local")
+                .action(clap::ArgAction::SetTrue)
+                .help("Force local browser-based conversion"),
+        )
+        .arg(
+            Arg::new("output")
+                .long("output")
+                .short('o')
+                .help("Output PDF file (default: same name as input with .pdf extension)"),
+        )
+        .arg(
+            Arg::new("remote")
+                .long("remote")
+                .action(clap::ArgAction::SetTrue)
+                .help("Force remote server conversion with full TeX Live"),
         )
 }
 
@@ -109,56 +126,46 @@ mod tests {
     fn test_latex2pdf_command_parses_input() {
         let cmd = latex2pdf_command();
         let matches = cmd.try_get_matches_from(["latex2pdf", "paper.tex"]).unwrap();
-        assert_eq!(
-            matches.get_one::<String>("input").map(|s| s.as_str()),
-            Some("paper.tex"),
-        );
+        assert_eq!(matches.get_one::<String>("input").map(|s| s.as_str()), Some("paper.tex"));
     }
 
     #[test]
     fn test_latex2pdf_with_output() {
         let cmd = latex2pdf_command();
-        let matches = cmd
-            .try_get_matches_from(["latex2pdf", "paper.tex", "--output", "paper.pdf"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("output").map(|s| s.as_str()),
-            Some("paper.pdf"),
-        );
+        let matches = cmd.try_get_matches_from(["latex2pdf", "paper.tex", "--output", "paper.pdf"]).unwrap();
+        assert_eq!(matches.get_one::<String>("output").map(|s| s.as_str()), Some("paper.pdf"));
     }
 
     #[test]
     fn test_latex2pdf_default_engine() {
         let cmd = latex2pdf_command();
         let matches = cmd.try_get_matches_from(["latex2pdf", "paper.tex"]).unwrap();
-        assert_eq!(
-            matches.get_one::<String>("engine").map(|s| s.as_str()),
-            Some("pdflatex"),
-        );
+        assert_eq!(matches.get_one::<String>("engine").map(|s| s.as_str()), Some("auto"));
     }
 
     #[test]
     fn test_latex2pdf_with_xelatex() {
         let cmd = latex2pdf_command();
-        let matches = cmd
-            .try_get_matches_from(["latex2pdf", "paper.tex", "--engine", "xelatex"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("engine").map(|s| s.as_str()),
-            Some("xelatex"),
-        );
+        let matches = cmd.try_get_matches_from(["latex2pdf", "paper.tex", "--engine", "xelatex"]).unwrap();
+        assert_eq!(matches.get_one::<String>("engine").map(|s| s.as_str()), Some("xelatex"));
     }
 
     #[test]
-    fn test_latex2pdf_with_lualatex() {
+    fn test_latex2pdf_css_flag() {
         let cmd = latex2pdf_command();
-        let matches = cmd
-            .try_get_matches_from(["latex2pdf", "paper.tex", "--engine", "lualatex"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("engine").map(|s| s.as_str()),
-            Some("lualatex"),
-        );
+        let matches = cmd.try_get_matches_from(["latex2pdf", "paper.tex", "--css", "custom.css"]).unwrap();
+        assert_eq!(matches.get_one::<String>("css").map(|s| s.as_str()), Some("custom.css"));
+    }
+
+    #[test]
+    fn test_latex2pdf_local_remote_flags() {
+        let cmd = latex2pdf_command();
+        let matches = cmd.try_get_matches_from(["latex2pdf", "paper.tex", "--local"]).unwrap();
+        assert!(matches.get_flag("local"));
+
+        let cmd = latex2pdf_command();
+        let matches = cmd.try_get_matches_from(["latex2pdf", "paper.tex", "--remote"]).unwrap();
+        assert!(matches.get_flag("remote"));
     }
 
     #[test]
@@ -180,6 +187,13 @@ mod tests {
         let meta = latex2pdf_meta();
         assert_eq!(meta.name, "latex2pdf");
         assert_eq!(meta.category, CommandCategory::Developer);
-        assert!(!meta.description.is_empty());
+    }
+
+    #[test]
+    fn test_latex2pdf_aliases() {
+        let cmd = latex2pdf_command();
+        let aliases: Vec<&str> = cmd.get_all_aliases().collect();
+        assert!(aliases.contains(&"tex2pdf"));
+        assert!(aliases.contains(&"latexpdf"));
     }
 }

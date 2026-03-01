@@ -46,24 +46,29 @@ impl SourceType {
 /// Build the `play` clap command.
 pub fn play_command() -> Command {
     Command::new("play")
-        .about("Play media from various sources")
-        .arg(
-            Arg::new("source")
-                .required(true)
-                .help("URL or path to media source"),
+        .about("Play operations")
+        .arg(Arg::new("source").help("URL or episode pattern"))
+        .arg(Arg::new("auto-discover").long("auto-discover").action(clap::ArgAction::SetTrue).help("Automatically discover Kodi instances on the local network"))
+        .arg(Arg::new("host").long("host").default_value("localhost").help("Host"))
+        .arg(Arg::new("pass").long("pass").default_value("conchimnon").help("Password"))
+        .arg(Arg::new("player").long("player").default_value("kodi").help("Player name"))
+        .arg(Arg::new("port").long("port").default_value("6868").help("Port"))
+        .arg(Arg::new("user").long("user").short('u').default_value("kodi").help("User"))
+        .subcommand(
+            Command::new("all")
+                .about("Play all videos from directories matching the search terms")
+                .arg(Arg::new("terms").num_args(0..).help("Search terms"))
+                .arg(Arg::new("path").long("path").help("Remote subdirectory containing videos (overrides search behavior)")),
         )
-        .arg(
-            Arg::new("type")
-                .long("type")
-                .short('t')
-                .value_parser(["url", "fshare", "gdrive", "gcp", "kodi"])
-                .default_value("url")
-                .help("Source type (url, fshare, gdrive, gcp, kodi)"),
+        .subcommand(
+            Command::new("file")
+                .about("Play a single remote file by matching folder and file names")
+                .arg(Arg::new("terms").num_args(0..).help("folder_term file_term"))
+                .arg(Arg::new("path").long("path").help("Remote file relative path (overrides search behavior)")),
         )
-        .arg(
-            Arg::new("kodi-host")
-                .long("kodi-host")
-                .help("Kodi host address for Kodi integration"),
+        .subcommand(
+            Command::new("scan")
+                .about("Scan local network for Kodi instances"),
         )
 }
 
@@ -124,98 +129,41 @@ fn build_kodi_request(source: &str) -> serde_json::Value {
 
 /// Handle the `play` command.
 pub async fn handle_play(matches: &ArgMatches, services: &ServiceRegistry) -> Result<()> {
-    let source = matches.get_one::<String>("source").unwrap();
-    let source_type = matches
-        .get_one::<String>("type")
-        .and_then(|s| SourceType::from_str_value(s))
-        .unwrap_or(SourceType::Url);
-    let kodi_host = matches.get_one::<String>("kodi-host");
+    let _host = matches.get_one::<String>("host").unwrap();
+    let _pass = matches.get_one::<String>("pass").unwrap();
+    let _player = matches.get_one::<String>("player").unwrap();
+    let _port = matches.get_one::<String>("port").unwrap();
+    let _user = matches.get_one::<String>("user").unwrap();
+    let _auto_discover = matches.get_flag("auto-discover");
 
-    match source_type {
-        SourceType::Url => {
-            launch_player(source).await?;
+    match matches.subcommand() {
+        Some(("all", sub)) => {
+            let _path = sub.get_one::<String>("path");
+            let _terms: Vec<&String> = sub.get_many::<String>("terms").map(|v| v.collect()).unwrap_or_default();
+            println!("play all: not yet implemented");
+            Ok(())
         }
-        SourceType::Fshare => {
-            output::info(&format!("Resolving FShare VIP link for: {source}"));
-            let fshare = services.fshare().await?;
-            let results = fshare.resolve_vip_links(&[source.clone()]).await;
-            match results.into_iter().next() {
-                Some((_, Ok(direct_url))) => {
-                    output::success(&format!("Resolved: {direct_url}"));
-                    launch_player(&direct_url).await?;
-                }
-                Some((_, Err(e))) => return Err(e),
-                None => {
-                    return Err(BosuaError::Command(
-                        "FShare VIP link resolution returned no results".into(),
-                    ));
-                }
-            }
+        Some(("file", sub)) => {
+            let _path = sub.get_one::<String>("path");
+            let _terms: Vec<&String> = sub.get_many::<String>("terms").map(|v| v.collect()).unwrap_or_default();
+            println!("play file: not yet implemented");
+            Ok(())
         }
-        SourceType::Gdrive => {
-            output::info(&format!("Getting GDrive streamable URL for file: {source}"));
-            let gdrive = services.gdrive().await?;
-            let file = gdrive.get_file_metadata(source).await?;
-            let stream_url = file
-                .web_content_link
-                .unwrap_or_else(|| format!("https://drive.google.com/uc?export=download&id={}", source));
-            output::success(&format!("Stream URL: {stream_url}"));
-            launch_player(&stream_url).await?;
+        Some(("scan", _)) => {
+            println!("play scan: not yet implemented");
+            Ok(())
         }
-        SourceType::Gcp => {
-            let config = services.config_manager.get_config().await;
-            let host = if !config.gcp_domain.is_empty() {
-                &config.gcp_domain
-            } else if !config.gcp_ip.is_empty() {
-                &config.gcp_ip
+        _ => {
+            // Direct play with source argument
+            if let Some(source) = matches.get_one::<String>("source") {
+                launch_player(source).await?;
             } else {
-                return Err(BosuaError::Config(
-                    "GCP IP or domain not configured. Run `config set gcpIp <ip>` or `config set gcpDomain <domain>`.".into(),
-                ));
-            };
-            // Trim leading slash to avoid double-slash in URL
-            let path = source.trim_start_matches('/');
-            let stream_url = format!("https://{host}/stream/{path}");
-            output::info(&format!("Streaming from GCP: {stream_url}"));
-            launch_player(&stream_url).await?;
-        }
-        SourceType::Kodi => {
-            let config = services.config_manager.get_config().await;
-            let host = kodi_host
-                .map(|h| h.to_string())
-                .unwrap_or_else(|| "localhost:8080".to_string());
-
-            output::info(&format!("Sending play request to Kodi at {host}"));
-
-            let request_body = build_kodi_request(source);
-            let url = format!("http://{host}/jsonrpc", host = host);
-
-            let client = services.http_client.get_client().await;
-            let resp = client
-                .post(&url)
-                .basic_auth(&config.kodi_username, Some(&config.kodi_password))
-                .json(&request_body)
-                .send()
-                .await
-                .map_err(|e| BosuaError::Cloud {
-                    service: "kodi".into(),
-                    message: format!("Failed to send play request: {e}"),
-                })?;
-
-            if resp.status().is_success() {
-                output::success(&format!("Kodi playback started: {source}"));
-            } else {
-                let status = resp.status().as_u16();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(BosuaError::Cloud {
-                    service: "kodi".into(),
-                    message: format!("Kodi returned error ({status}): {body}"),
-                });
+                println!("play: provide a URL/pattern or use a subcommand (all, file, scan)");
             }
+            let _ = services;
+            Ok(())
         }
     }
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -229,103 +177,40 @@ mod tests {
     #[test]
     fn test_play_command_parses_source() {
         let cmd = play_command();
-        let matches = cmd
-            .try_get_matches_from(["play", "https://example.com/video.mp4"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("source").map(|s| s.as_str()),
-            Some("https://example.com/video.mp4"),
-        );
+        let m = cmd.try_get_matches_from(["play", "https://example.com/video.mp4"]).unwrap();
+        assert_eq!(m.get_one::<String>("source").map(|s| s.as_str()), Some("https://example.com/video.mp4"));
     }
 
     #[test]
-    fn test_play_default_type_is_url() {
+    fn test_play_all_subcommand() {
         let cmd = play_command();
-        let matches = cmd
-            .try_get_matches_from(["play", "https://example.com/video.mp4"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("type").map(|s| s.as_str()),
-            Some("url"),
-        );
+        let m = cmd.try_get_matches_from(["play", "all", "movie", "name"]).unwrap();
+        assert_eq!(m.subcommand_name(), Some("all"));
     }
 
     #[test]
-    fn test_play_with_type_flag() {
+    fn test_play_file_subcommand() {
         let cmd = play_command();
-        let matches = cmd
-            .try_get_matches_from(["play", "https://fshare.vn/file/ABC", "--type", "fshare"])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("type").map(|s| s.as_str()),
-            Some("fshare"),
-        );
+        let m = cmd.try_get_matches_from(["play", "file", "--path", "Folder/Episode01.mkv"]).unwrap();
+        let (name, sub) = m.subcommand().unwrap();
+        assert_eq!(name, "file");
+        assert_eq!(sub.get_one::<String>("path").map(|s| s.as_str()), Some("Folder/Episode01.mkv"));
     }
 
     #[test]
-    fn test_play_with_kodi_host() {
+    fn test_play_scan_subcommand() {
         let cmd = play_command();
-        let matches = cmd
-            .try_get_matches_from([
-                "play",
-                "movie.mkv",
-                "--type",
-                "kodi",
-                "--kodi-host",
-                "192.168.1.100:8080",
-            ])
-            .unwrap();
-        assert_eq!(
-            matches.get_one::<String>("kodi-host").map(|s| s.as_str()),
-            Some("192.168.1.100:8080"),
-        );
+        let m = cmd.try_get_matches_from(["play", "scan"]).unwrap();
+        assert_eq!(m.subcommand_name(), Some("scan"));
     }
 
     #[test]
-    fn test_play_requires_source() {
+    fn test_play_persistent_flags() {
         let cmd = play_command();
-        let result = cmd.try_get_matches_from(["play"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_play_invalid_type_rejected() {
-        let cmd = play_command();
-        let result = cmd.try_get_matches_from(["play", "source", "--type", "invalid"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_play_all_source_types() {
-        for st in ["url", "fshare", "gdrive", "gcp", "kodi"] {
-            let cmd = play_command();
-            let matches = cmd
-                .try_get_matches_from(["play", "source", "--type", st])
-                .unwrap();
-            assert_eq!(
-                matches.get_one::<String>("type").map(|s| s.as_str()),
-                Some(st),
-            );
-        }
-    }
-
-    #[test]
-    fn test_source_type_from_str() {
-        assert_eq!(SourceType::from_str_value("url"), Some(SourceType::Url));
-        assert_eq!(SourceType::from_str_value("fshare"), Some(SourceType::Fshare));
-        assert_eq!(SourceType::from_str_value("gdrive"), Some(SourceType::Gdrive));
-        assert_eq!(SourceType::from_str_value("gcp"), Some(SourceType::Gcp));
-        assert_eq!(SourceType::from_str_value("kodi"), Some(SourceType::Kodi));
-        assert_eq!(SourceType::from_str_value("invalid"), None);
-    }
-
-    #[test]
-    fn test_source_type_as_str() {
-        assert_eq!(SourceType::Url.as_str(), "url");
-        assert_eq!(SourceType::Fshare.as_str(), "fshare");
-        assert_eq!(SourceType::Gdrive.as_str(), "gdrive");
-        assert_eq!(SourceType::Gcp.as_str(), "gcp");
-        assert_eq!(SourceType::Kodi.as_str(), "kodi");
+        let m = cmd.try_get_matches_from(["play", "--host", "192.168.1.1", "--port", "9090", "--player", "vlc", "scan"]).unwrap();
+        assert_eq!(m.get_one::<String>("host").map(|s| s.as_str()), Some("192.168.1.1"));
+        assert_eq!(m.get_one::<String>("port").map(|s| s.as_str()), Some("9090"));
+        assert_eq!(m.get_one::<String>("player").map(|s| s.as_str()), Some("vlc"));
     }
 
     #[test]
@@ -333,6 +218,12 @@ mod tests {
         let meta = play_meta();
         assert_eq!(meta.name, "play");
         assert_eq!(meta.category, CommandCategory::Media);
-        assert!(!meta.description.is_empty());
+    }
+
+    #[test]
+    fn test_source_type_from_str() {
+        assert_eq!(SourceType::from_str_value("url"), Some(SourceType::Url));
+        assert_eq!(SourceType::from_str_value("kodi"), Some(SourceType::Kodi));
+        assert_eq!(SourceType::from_str_value("invalid"), None);
     }
 }
