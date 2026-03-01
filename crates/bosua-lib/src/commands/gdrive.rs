@@ -582,39 +582,126 @@ async fn handle_generate_playlist(_matches: &ArgMatches, _gdrive: &GDriveClient)
     Ok(())
 }
 
-async fn handle_account(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+/// GDrive config base path: `~/.config/gdrive3/`
+/// Matches Go's `DefaultBasePath()`.
+fn gdrive_base_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
+    home.join(".config").join("gdrive3")
+}
+
+/// List all configured GDrive accounts by scanning `~/.config/gdrive3/`
+/// for subdirectories containing `tokens.json`.
+/// Matches Go's `ListAccounts()`.
+fn list_gdrive_accounts() -> Result<Vec<String>> {
+    let base = gdrive_base_path();
+    if !base.exists() {
+        return Ok(Vec::new());
+    }
+    let mut accounts = Vec::new();
+    let entries = std::fs::read_dir(&base)
+        .map_err(|e| BosuaError::Io(e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| BosuaError::Io(e))?;
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            let tokens_path = entry.path().join("tokens.json");
+            if tokens_path.exists() {
+                if let Some(name) = entry.file_name().to_str() {
+                    accounts.push(name.to_string());
+                }
+            }
+        }
+    }
+    accounts.sort();
+    Ok(accounts)
+}
+
+/// Load the current account name from `~/.config/gdrive3/account.json`.
+/// Matches Go's `LoadAccountConfig()`.
+fn load_current_gdrive_account() -> Option<String> {
+    let path = gdrive_base_path().join("account.json");
+    let data = std::fs::read_to_string(&path).ok()?;
+    let config: serde_json::Value = serde_json::from_str(&data).ok()?;
+    config.get("current").and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+/// Save the current account name to `~/.config/gdrive3/account.json`.
+/// Matches Go's `SaveAccountConfig()`.
+fn save_current_gdrive_account(name: &str) -> Result<()> {
+    let base = gdrive_base_path();
+    std::fs::create_dir_all(&base).map_err(BosuaError::Io)?;
+    let config = serde_json::json!({ "current": name });
+    let data = serde_json::to_string_pretty(&config)
+        .map_err(|e| BosuaError::Application(format!("JSON serialize error: {e}")))?;
+    std::fs::write(base.join("account.json"), data).map_err(BosuaError::Io)?;
+    Ok(())
+}
+
+async fn handle_account(matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
     match matches.subcommand() {
-        Some(("list", _)) => {
-            let account = gdrive.default_account().await;
-            println!("Default account: {}", account);
+        Some(("list", sub)) => {
+            let json_output = sub.get_flag("json");
+            let accounts = list_gdrive_accounts()?;
+            if accounts.is_empty() {
+                println!("No accounts configured");
+                return Ok(());
+            }
+            if json_output {
+                let json = serde_json::to_string(&accounts)
+                    .map_err(|e| BosuaError::Application(format!("JSON error: {e}")))?;
+                println!("{}", json);
+                return Ok(());
+            }
+            let current = load_current_gdrive_account().unwrap_or_default();
+            // Tab-aligned table matching Go's tabwriter output
+            println!("{:<14}{}", "Name", "Current");
+            for account in &accounts {
+                let marker = if *account == current { "*" } else { "" };
+                println!("{:<14}{}", account, marker);
+            }
             Ok(())
         }
         Some(("current", _)) => {
-            let account = gdrive.default_account().await;
-            println!("Current account: {}", account);
+            match load_current_gdrive_account() {
+                Some(account) => println!("{}", account),
+                None => {
+                    output::error("no account has been selected");
+                    output::info("Use `gdrive account list` to show all accounts");
+                    output::info("Use `gdrive account switch` to select an account");
+                }
+            }
             Ok(())
         }
         Some(("info", _)) => {
-            let account = gdrive.default_account().await;
-            println!("Current account: {}", account);
-            match gdrive.load_token().await? {
-                Some(token) => {
-                    println!("  Status: authenticated");
-                    println!(
-                        "  Expires: {}",
-                        token.expiry.as_deref().unwrap_or("unknown")
-                    );
+            match load_current_gdrive_account() {
+                Some(account) => {
+                    println!("Current account: {}", account);
+                    let tokens_path = gdrive_base_path().join(&account).join("tokens.json");
+                    if tokens_path.exists() {
+                        println!("  Status: authenticated");
+                    } else {
+                        println!("  Status: not authenticated");
+                        output::info("Run `bosua gdrive oauth2 login` to authenticate.");
+                    }
                 }
                 None => {
-                    println!("  Status: not authenticated");
-                    output::info("Run `bosua gdrive oauth2 login` to authenticate.");
+                    output::error("no account has been selected");
                 }
             }
             Ok(())
         }
         Some(("switch", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            gdrive.update_default_account(name).await;
+            // Verify account exists
+            let accounts = list_gdrive_accounts()?;
+            if !accounts.contains(name) {
+                return Err(BosuaError::Command(format!(
+                    "Account '{}' not found. Use `gdrive account list` to see available accounts.",
+                    name
+                )));
+            }
+            save_current_gdrive_account(name)?;
             output::success(&format!("Switched to account: {}", name));
             Ok(())
         }
