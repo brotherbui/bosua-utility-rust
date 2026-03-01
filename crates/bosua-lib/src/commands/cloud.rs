@@ -81,21 +81,75 @@ pub fn cloud_meta() -> CommandMeta {
 }
 
 /// Handle the `cloud` command dispatch.
+///
+/// All cloud subcommands involve SSH connections and remote server management.
+/// They delegate to the Go binary which has the full SSH/remote infrastructure.
 pub fn handle_cloud(matches: &ArgMatches) {
-    let _backend = matches.get_flag("backend");
-    let _gcp = matches.get_flag("gcp");
-    let _ip = matches.get_one::<String>("ip");
+    let go_bin = "/opt/homebrew/bin/bosua";
+    if !std::path::Path::new(go_bin).exists() {
+        println!("cloud commands require the Go binary at /opt/homebrew/bin/bosua (SSH/remote infrastructure not yet ported)");
+        return;
+    }
 
+    let mut args = vec!["cloud".to_string()];
+
+    // Forward persistent flags
+    if matches.get_flag("backend") { args.push("--backend".to_string()); }
+    if matches.get_flag("gcp") { args.push("--gcp".to_string()); }
+    if let Some(ip) = matches.get_one::<String>("ip") {
+        args.push(format!("--ip={}", ip));
+    }
+
+    // Forward subcommand
     match matches.subcommand() {
-        Some(("config", _sub)) => println!("cloud config: not yet implemented"),
-        Some(("daemon", _sub)) => println!("cloud daemon: not yet implemented"),
-        Some(("gdrive", _sub)) => println!("cloud gdrive: not yet implemented"),
-        Some(("service", _sub)) => println!("cloud service: not yet implemented"),
-        Some(("setup", _sub)) => println!("cloud setup: not yet implemented"),
-        Some(("stats", _sub)) => println!("cloud stats: not yet implemented"),
-        Some(("sync", _sub)) => println!("cloud sync: not yet implemented"),
+        Some(("config", sub)) => {
+            args.push("config".to_string());
+            if let Some((name, _)) = sub.subcommand() {
+                args.push(name.to_string());
+            }
+        }
+        Some(("daemon", sub)) => {
+            args.push("daemon".to_string());
+            if let Some((name, _)) = sub.subcommand() {
+                args.push(name.to_string());
+            }
+        }
+        Some(("gdrive", sub)) => {
+            args.push("gdrive".to_string());
+            if let Some((name, _)) = sub.subcommand() {
+                args.push(name.to_string());
+            }
+        }
+        Some(("service", sub)) => {
+            args.push("service".to_string());
+            if let Some((name, _)) = sub.subcommand() {
+                args.push(name.to_string());
+            }
+        }
+        Some(("setup", sub)) => {
+            args.push("setup".to_string());
+            if let Some((name, _)) = sub.subcommand() {
+                args.push(name.to_string());
+            }
+        }
+        Some(("stats", _sub)) => {
+            args.push("stats".to_string());
+        }
+        Some(("sync", sub)) => {
+            args.push("sync".to_string());
+            if let Some((name, _)) = sub.subcommand() {
+                args.push(name.to_string());
+            }
+        }
         _ => unreachable!("subcommand_required is set"),
     }
+
+    let _ = std::process::Command::new(go_bin)
+        .args(&args)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status();
 }
 
 #[cfg(test)]

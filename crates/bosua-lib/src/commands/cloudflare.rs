@@ -399,16 +399,13 @@ fn ruleset_subcommand() -> Command {
 async fn handle_account(matches: &ArgMatches, _cf: &CloudflareClient) -> Result<()> {
     match matches.subcommand() {
         Some(("add", _)) => {
-            println!("cloudflare account add: not yet implemented");
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "account", "add"]).await
         }
         Some(("list", _)) => {
-            println!("cloudflare account list: not yet implemented");
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "account", "list"]).await
         }
         Some(("current", _)) => {
-            println!("cloudflare account current: not yet implemented");
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "account", "current"]).await
         }
         Some(("info", _)) => {
             println!("Cloudflare account info: use `cloudflare dns list` to check configuration");
@@ -416,23 +413,19 @@ async fn handle_account(matches: &ArgMatches, _cf: &CloudflareClient) -> Result<
         }
         Some(("switch", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            println!("Switched to Cloudflare account: {}", name);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "account", "switch", name]).await
         }
         Some(("remove", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            println!("cloudflare account remove {}: not yet implemented", name);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "account", "remove", name]).await
         }
         Some(("export", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            println!("cloudflare account export {}: not yet implemented", name);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "account", "export", name]).await
         }
         Some(("import", sub)) => {
             let path = sub.get_one::<String>("json_file").unwrap();
-            println!("cloudflare account import {}: not yet implemented", path);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "account", "import", path]).await
         }
         _ => {
             println!("cloudflare account: use a subcommand (add, list, current, info, switch, remove, export, import)");
@@ -444,12 +437,10 @@ async fn handle_account(matches: &ArgMatches, _cf: &CloudflareClient) -> Result<
 fn handle_daemon(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("setup", _)) => {
-            println!("cloudflare daemon setup: not yet implemented");
-            Ok(())
+            super::delegate_to_go_sync(&["cloudflare", "daemon", "setup"])
         }
         Some(("status", _)) => {
-            println!("cloudflare daemon status: not yet implemented");
-            Ok(())
+            super::delegate_to_go_sync(&["cloudflare", "daemon", "status"])
         }
         _ => {
             println!("cloudflare daemon: use a subcommand (setup, status)");
@@ -480,8 +471,7 @@ async fn handle_dns(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()> {
         }
         Some(("get", sub)) => {
             let id = sub.get_one::<String>("record-id").unwrap();
-            println!("cloudflare dns get {}: not yet implemented", id);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "dns", "get", id]).await
         }
         Some(("create", sub)) => {
             let record_type = sub.get_one::<String>("type").unwrap_or(&String::new()).clone();
@@ -504,8 +494,7 @@ async fn handle_dns(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()> {
         }
         Some(("update", sub)) => {
             let id = sub.get_one::<String>("record-id").unwrap();
-            println!("cloudflare dns update {}: not yet implemented", id);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "dns", "update", id]).await
         }
         Some(("delete", sub)) => {
             let record_id = sub.get_one::<String>("record-id").unwrap();
@@ -524,8 +513,7 @@ async fn handle_domain(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()
     match matches.subcommand() {
         Some(("add", sub)) => {
             let domain = sub.get_one::<String>("domain").unwrap();
-            println!("cloudflare domain add {}: not yet implemented", domain);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "domain", "add", domain]).await
         }
         Some(("list", _)) => {
             let zones = cf.list_zones().await?;
@@ -544,13 +532,11 @@ async fn handle_domain(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()
         }
         Some(("get", sub)) => {
             let domain = sub.get_one::<String>("domain").unwrap();
-            println!("cloudflare domain get {}: not yet implemented", domain);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "domain", "get", domain]).await
         }
         Some(("delete", sub)) => {
             let domain = sub.get_one::<String>("domain").unwrap();
-            println!("cloudflare domain delete {}: not yet implemented", domain);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "domain", "delete", domain]).await
         }
         _ => {
             println!("cloudflare domain: use a subcommand (add, list, get, delete)");
@@ -562,17 +548,14 @@ async fn handle_domain(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()
 fn handle_route(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("add", _)) => {
-            println!("cloudflare route add: not yet implemented");
-            Ok(())
+            super::delegate_to_go_sync(&["cloudflare", "route", "add"])
         }
         Some(("list", _)) => {
-            println!("cloudflare route list: not yet implemented");
-            Ok(())
+            super::delegate_to_go_sync(&["cloudflare", "route", "list"])
         }
         Some(("delete", sub)) => {
             let hostname = sub.get_one::<String>("hostname").unwrap();
-            println!("cloudflare route delete {}: not yet implemented", hostname);
-            Ok(())
+            super::delegate_to_go_sync(&["cloudflare", "route", "delete", hostname])
         }
         _ => {
             println!("cloudflare route: use a subcommand (add, list, delete)");
@@ -584,29 +567,13 @@ fn handle_route(matches: &ArgMatches) -> Result<()> {
 async fn handle_rule(matches: &ArgMatches, cf: &CloudflareClient) -> Result<()> {
     match matches.subcommand() {
         Some(("validate", _)) => {
-            println!("cloudflare rule validate: not yet implemented");
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "rule", "validate"]).await
         }
         Some((rule_type, sub)) => {
             // Generic handler for all rule types (cache, url-rewrite, config, origin, etc.)
             match sub.subcommand() {
-                Some(("list", _)) => {
-                    println!("cloudflare rule {} list: not yet implemented", rule_type);
-                }
-                Some(("get", _)) => {
-                    println!("cloudflare rule {} get: not yet implemented", rule_type);
-                }
-                Some(("create", _)) => {
-                    println!("cloudflare rule {} create: not yet implemented", rule_type);
-                }
-                Some(("delete", _)) => {
-                    println!("cloudflare rule {} delete: not yet implemented", rule_type);
-                }
-                Some(("sync", _)) => {
-                    println!("cloudflare rule {} sync: not yet implemented", rule_type);
-                }
-                Some(("export", _)) => {
-                    println!("cloudflare rule {} export: not yet implemented", rule_type);
+                Some((action, _)) => {
+                    super::delegate_to_go(&["cloudflare", "rule", rule_type, action]).await?;
                 }
                 _ => {
                     println!("cloudflare rule {}: use a subcommand (list, get, create, delete, sync, export)", rule_type);
@@ -672,12 +639,10 @@ async fn handle_tunnel(matches: &ArgMatches, _cf: &CloudflareClient) -> Result<(
         }
         Some(("delete", sub)) => {
             let id = sub.get_one::<String>("tunnel-id").unwrap();
-            println!("cloudflare tunnel delete {}: not yet implemented", id);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "tunnel", "delete", id]).await
         }
         Some((cmd, _)) => {
-            println!("cloudflare tunnel {}: not yet implemented", cmd);
-            Ok(())
+            super::delegate_to_go(&["cloudflare", "tunnel", cmd]).await
         }
         _ => {
             println!("cloudflare tunnel: use a subcommand (add, list, info, delete, cleanup, save, list-saved, current, switch, show, remove-saved, import)");

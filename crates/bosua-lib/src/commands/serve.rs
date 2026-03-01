@@ -32,17 +32,19 @@ pub async fn handle_serve(matches: &ArgMatches) -> Result<()> {
     let port = matches.get_one::<String>("port").unwrap();
     let tls = matches.get_flag("tls");
 
-    let scheme = if tls { "https" } else { "http" };
-    println!("Starting {} server on {}:{}", scheme, host, port);
-
+    let mut args = vec!["serve", "--host", host, "--port", port];
     if tls {
-        let _cert = matches.get_one::<String>("cert-file");
-        let _key = matches.get_one::<String>("key-file");
-        println!("TLS enabled");
+        args.push("--tls");
+        if let Some(cert) = matches.get_one::<String>("cert-file") {
+            args.push("--cert-file");
+            args.push(cert);
+        }
+        if let Some(key) = matches.get_one::<String>("key-file") {
+            args.push("--key-file");
+            args.push(key);
+        }
     }
-
-    println!("serve: not yet implemented");
-    Ok(())
+    super::delegate_to_go(&args).await
 }
 
 #[cfg(test)]

@@ -88,22 +88,81 @@ pub async fn handle_sms_activate(matches: &ArgMatches, http: &HttpClient) -> Res
             Ok(())
         }
         Some(("cancel", _)) => {
-            println!("smsactivate cancel: not yet implemented");
+            // Delegate to Go binary which has full SMS activation state management
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(BosuaError::Command("smsactivate cancel requires the Go binary".into()));
+            }
+            let status = std::process::Command::new(go_bin)
+                .args(["smsactivate", "cancel"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(BosuaError::Command("smsactivate cancel failed".into()));
+            }
             Ok(())
         }
         Some(("check", _)) => {
-            println!("smsactivate check: not yet implemented");
+            // Delegate to Go binary which has polling/context support
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(BosuaError::Command("smsactivate check requires the Go binary".into()));
+            }
+            let status = std::process::Command::new(go_bin)
+                .args(["smsactivate", "check"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(BosuaError::Command("smsactivate check failed".into()));
+            }
             Ok(())
         }
         Some(("generate", _)) => {
-            println!("smsactivate generate: not yet implemented");
+            // Delegate to Go binary which generates country/service maps
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(BosuaError::Command("smsactivate generate requires the Go binary".into()));
+            }
+            let status = std::process::Command::new(go_bin)
+                .args(["smsactivate", "generate"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(BosuaError::Command("smsactivate generate failed".into()));
+            }
             Ok(())
         }
         Some(("list", sub)) => {
-            match sub.subcommand() {
-                Some(("country", _)) => println!("smsactivate list country: not yet implemented"),
-                Some(("service", _)) => println!("smsactivate list service: not yet implemented"),
-                _ => println!("smsactivate list: use a subcommand (country, service)"),
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(BosuaError::Command("smsactivate list requires the Go binary".into()));
+            }
+            let subcmd = match sub.subcommand() {
+                Some(("country", _)) => "country",
+                Some(("service", _)) => "service",
+                _ => {
+                    println!("smsactivate list: use a subcommand (country, service)");
+                    return Ok(());
+                }
+            };
+            let status = std::process::Command::new(go_bin)
+                .args(["smsactivate", "list", subcmd])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(BosuaError::Command("smsactivate list failed".into()));
             }
             Ok(())
         }

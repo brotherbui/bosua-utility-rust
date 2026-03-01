@@ -277,19 +277,47 @@ fn acl_subcommand() -> Command {
 // Wired handlers
 // ---------------------------------------------------------------------------
 
+/// Helper to delegate a tailscale subcommand to the Go binary.
+async fn delegate_tailscale(args: &[&str]) -> Result<()> {
+    let go_bin = "/opt/homebrew/bin/bosua";
+    if !std::path::Path::new(go_bin).exists() {
+        return Err(crate::errors::BosuaError::Command(format!(
+            "tailscale {} requires the Go binary at /opt/homebrew/bin/bosua",
+            args.join(" ")
+        )));
+    }
+    let mut full_args = vec!["tailscale"];
+    full_args.extend_from_slice(args);
+    let status = tokio::process::Command::new(go_bin)
+        .args(&full_args)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .await
+        .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+    if !status.success() {
+        return Err(crate::errors::BosuaError::Command(format!(
+            "tailscale {} failed",
+            args.join(" ")
+        )));
+    }
+    Ok(())
+}
+
 fn handle_account(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("add", _)) => {
-            println!("tailscale account add: not yet implemented");
-            Ok(())
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(delegate_tailscale(&["account", "add"]))
         }
         Some(("list", _)) => {
-            println!("tailscale account list: not yet implemented");
-            Ok(())
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(delegate_tailscale(&["account", "list"]))
         }
         Some(("current", _)) => {
-            println!("tailscale account current: not yet implemented");
-            Ok(())
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(delegate_tailscale(&["account", "current"]))
         }
         Some(("info", _)) => {
             println!("Tailscale account info: use `tailscale acl get` or `tailscale list` to check configuration");
@@ -297,23 +325,23 @@ fn handle_account(matches: &ArgMatches) -> Result<()> {
         }
         Some(("switch", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            println!("Switched to Tailscale account: {}", name);
-            Ok(())
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(delegate_tailscale(&["account", "switch", name]))
         }
         Some(("remove", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            println!("tailscale account remove {}: not yet implemented", name);
-            Ok(())
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(delegate_tailscale(&["account", "remove", name]))
         }
         Some(("export", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            println!("tailscale account export {}: not yet implemented", name);
-            Ok(())
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(delegate_tailscale(&["account", "export", name]))
         }
         Some(("import", sub)) => {
             let path = sub.get_one::<String>("json_file").unwrap();
-            println!("tailscale account import {}: not yet implemented", path);
-            Ok(())
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(delegate_tailscale(&["account", "import", path]))
         }
         _ => {
             println!("tailscale account: use a subcommand (add, list, current, info, switch, remove, export, import)");
@@ -360,44 +388,37 @@ async fn handle_info(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
 async fn handle_approve(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
     let id = matches.get_one::<String>("hostname_or_id").unwrap();
     let exit_node = matches.get_flag("exit-node");
-    println!("tailscale approve {}: not yet implemented", id);
-    if exit_node {
-        println!("  (with --exit-node)");
-    }
-    Ok(())
+    let mut args = vec!["approve", id.as_str()];
+    if exit_node { args.push("--exit-node"); }
+    delegate_tailscale(&args).await
 }
 
 async fn handle_deauthorize(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
     let id = matches.get_one::<String>("hostname_or_id").unwrap();
-    println!("tailscale deauthorize {}: not yet implemented", id);
-    Ok(())
+    delegate_tailscale(&["deauthorize", id]).await
 }
 
 async fn handle_set_name(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
     let id = matches.get_one::<String>("hostname_or_id").unwrap();
     let name = matches.get_one::<String>("new_name").unwrap();
-    println!("tailscale set-name {} {}: not yet implemented", id, name);
-    Ok(())
+    delegate_tailscale(&["set-name", id, name]).await
 }
 
 async fn handle_set_tags(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
     let id = matches.get_one::<String>("hostname_or_id").unwrap();
     let tags = matches.get_one::<String>("tags").unwrap();
-    println!("tailscale set-tags {} {}: not yet implemented", id, tags);
-    Ok(())
+    delegate_tailscale(&["set-tags", id, tags]).await
 }
 
 async fn handle_disable_key_expiry(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
     let id = matches.get_one::<String>("hostname_or_id").unwrap();
-    println!("tailscale disable-key-expiry {}: not yet implemented", id);
-    Ok(())
+    delegate_tailscale(&["disable-key-expiry", id]).await
 }
 
 async fn handle_set_ipv4(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
     let id = matches.get_one::<String>("hostname_or_id").unwrap();
     let ip = matches.get_one::<String>("ipv4_address").unwrap();
-    println!("tailscale set-ipv4 {} {}: not yet implemented", id, ip);
-    Ok(())
+    delegate_tailscale(&["set-ipv4", id, ip]).await
 }
 
 async fn handle_delete(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
@@ -407,9 +428,16 @@ async fn handle_delete(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()>
     Ok(())
 }
 
-async fn handle_key_generate(_matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
-    println!("tailscale key-generate: not yet implemented");
-    Ok(())
+async fn handle_key_generate(matches: &ArgMatches, _ts: &TailscaleClient) -> Result<()> {
+    let reusable = matches.get_flag("reusable");
+    let ephemeral = matches.get_flag("ephemeral");
+    let tags = matches.get_one::<String>("tags").unwrap();
+    let mut args = vec!["key-generate".to_string()];
+    if reusable { args.push("--reusable".to_string()); }
+    if ephemeral { args.push("--ephemeral".to_string()); }
+    args.push(format!("--tags={}", tags));
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    delegate_tailscale(&refs).await
 }
 
 async fn handle_routes(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
@@ -425,18 +453,15 @@ async fn handle_exit_node(matches: &ArgMatches, _ts: &TailscaleClient) -> Result
     match matches.subcommand() {
         Some(("approve", sub)) => {
             let id = sub.get_one::<String>("hostname_or_id").unwrap();
-            println!("tailscale exit-node approve {}: not yet implemented", id);
-            Ok(())
+            delegate_tailscale(&["exit-node", "approve", id]).await
         }
         Some(("unapprove", sub)) => {
             let id = sub.get_one::<String>("hostname_or_id").unwrap();
-            println!("tailscale exit-node unapprove {}: not yet implemented", id);
-            Ok(())
+            delegate_tailscale(&["exit-node", "unapprove", id]).await
         }
         Some(("status", sub)) => {
             let id = sub.get_one::<String>("hostname_or_id").unwrap();
-            println!("tailscale exit-node status {}: not yet implemented", id);
-            Ok(())
+            delegate_tailscale(&["exit-node", "status", id]).await
         }
         _ => {
             println!("tailscale exit-node: use a subcommand (approve, unapprove, status)");
@@ -481,8 +506,7 @@ async fn handle_acl(matches: &ArgMatches, ts: &TailscaleClient) -> Result<()> {
             Ok(())
         }
         Some((cmd, _)) => {
-            println!("tailscale acl {}: not yet implemented", cmd);
-            Ok(())
+            delegate_tailscale(&["acl", cmd]).await
         }
         _ => {
             println!("tailscale acl: use a subcommand (get, set, edit, interactive, commit, draft, validate, test)");

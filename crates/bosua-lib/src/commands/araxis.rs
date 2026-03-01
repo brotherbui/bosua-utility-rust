@@ -25,11 +25,32 @@ pub fn araxis_meta() -> CommandMeta {
 }
 
 /// Handle the `araxis` command.
+///
+/// Delegates to Go binary which has testmail integration and AppleScript
+/// automation for Araxis registration.
 pub async fn handle_araxis(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("register", _)) => {
-            println!("Registering Araxis Merge...");
-            println!("araxis register: not yet implemented");
+            // Delegate to Go binary which has testmail + clipboard + AppleScript integration
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(crate::errors::BosuaError::Command(
+                    "Araxis register requires the Go binary at /opt/homebrew/bin/bosua (testmail integration not yet ported)".into(),
+                ));
+            }
+
+            let status = tokio::process::Command::new(go_bin)
+                .args(["araxis", "register"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await
+                .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+
+            if !status.success() {
+                return Err(crate::errors::BosuaError::Command("Araxis registration failed".into()));
+            }
             Ok(())
         }
         _ => unreachable!("subcommand_required is set"),

@@ -290,8 +290,7 @@ async fn handle_account(matches: &ArgMatches, config_mgr: &DynamicConfigManager)
             Ok(())
         }
         Some((name, _)) => {
-            println!("aws account {}: not yet implemented", name);
-            Ok(())
+            super::delegate_to_go(&["aws", "account", name]).await
         }
         _ => {
             println!("aws account: use a subcommand");
@@ -354,8 +353,7 @@ async fn handle_instance(matches: &ArgMatches, client: &mut AwsClient) -> Result
             Ok(())
         }
         Some((name, _)) => {
-            println!("aws instance {}: not yet implemented", name);
-            Ok(())
+            super::delegate_to_go(&["aws", "instance", name]).await
         }
         _ => {
             println!("aws instance: use a subcommand");
@@ -383,8 +381,7 @@ async fn handle_firewall(matches: &ArgMatches, client: &mut AwsClient) -> Result
             Ok(())
         }
         Some((name, _)) => {
-            println!("aws firewall {}: not yet implemented", name);
-            Ok(())
+            super::delegate_to_go(&["aws", "firewall", name]).await
         }
         _ => {
             println!("aws firewall: use a subcommand");
@@ -426,8 +423,7 @@ async fn handle_sg(matches: &ArgMatches, client: &mut AwsClient) -> Result<()> {
             Ok(())
         }
         Some((name, _)) => {
-            println!("aws sg {}: not yet implemented", name);
-            Ok(())
+            super::delegate_to_go(&["aws", "sg", name]).await
         }
         _ => {
             println!("aws sg: use a subcommand");

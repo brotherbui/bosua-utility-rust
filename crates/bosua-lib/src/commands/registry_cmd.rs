@@ -283,9 +283,46 @@ pub fn registry_meta() -> CommandMeta {
 /// Handle the `registry` command.
 pub fn handle_registry(matches: &ArgMatches) {
     match matches.subcommand() {
-        Some(("list", _)) => println!("registry list: not yet implemented"),
-        Some(("stats", _)) => println!("registry stats: not yet implemented"),
-        Some(("validate", _)) => println!("registry validate: not yet implemented"),
+        Some(("list", _)) => {
+            // Delegate to Go binary which has the full command registry
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if std::path::Path::new(go_bin).exists() {
+                let _ = std::process::Command::new(go_bin)
+                    .args(["registry", "list"])
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status();
+            } else {
+                println!("registry list requires the Go binary at /opt/homebrew/bin/bosua");
+            }
+        }
+        Some(("stats", _)) => {
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if std::path::Path::new(go_bin).exists() {
+                let _ = std::process::Command::new(go_bin)
+                    .args(["registry", "stats"])
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status();
+            } else {
+                println!("registry stats requires the Go binary at /opt/homebrew/bin/bosua");
+            }
+        }
+        Some(("validate", _)) => {
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if std::path::Path::new(go_bin).exists() {
+                let _ = std::process::Command::new(go_bin)
+                    .args(["registry", "validate"])
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status();
+            } else {
+                println!("registry validate requires the Go binary at /opt/homebrew/bin/bosua");
+            }
+        }
         _ => unreachable!("subcommand_required is set"),
     }
 }

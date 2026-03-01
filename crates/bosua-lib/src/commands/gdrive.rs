@@ -478,8 +478,35 @@ async fn handle_list(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> 
     Ok(())
 }
 
-async fn handle_search(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
-    output::info("gdrive search: not yet implemented in Rust backend");
+async fn handle_search(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let search_terms: Vec<&String> = matches.get_many::<String>("search_text").unwrap().collect();
+    let search_text = search_terms.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
+    let max_files = matches.get_one::<u32>("max").copied().unwrap_or(100);
+
+    // Build query matching Go's search logic
+    let query = format!(
+        "name contains '{}' and trashed = false",
+        search_text.replace('\'', "\\'")
+    );
+
+    let file_list = gdrive
+        .list_files(None, Some(&query), Some(max_files))
+        .await?;
+
+    if file_list.files.is_empty() {
+        println!("No results");
+    } else {
+        println!("{:<44} {:<40} {:>10} {}", "ID", "Name", "Size", "Type");
+        println!("{}", "-".repeat(100));
+        for f in &file_list.files {
+            let size = f
+                .size
+                .map(|s| format_size(s))
+                .unwrap_or_else(|| "-".to_string());
+            println!("{:<44} {:<40} {:>10} {}", f.id, f.name, size, f.mime_type);
+        }
+        println!("\n{} file(s)", file_list.files.len());
+    }
     Ok(())
 }
 
@@ -544,9 +571,29 @@ async fn handle_mkdir(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()>
     Ok(())
 }
 
-async fn handle_rename(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
-    output::info("gdrive rename: not yet implemented in Rust backend");
-    Ok(())
+async fn handle_rename(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
+    let file_id = matches.get_one::<String>("file-id").unwrap();
+    let new_name = matches.get_one::<String>("new-name").unwrap();
+
+    // Delegate to Go binary which has the full rename implementation
+    let go_bin = "/opt/homebrew/bin/bosua";
+    if std::path::Path::new(go_bin).exists() {
+        let status = tokio::process::Command::new(go_bin)
+            .args(["gdrive", "rename", file_id, new_name])
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await
+            .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+        if !status.success() {
+            return Err(BosuaError::Command("gdrive rename failed".into()));
+        }
+        return Ok(());
+    }
+
+    let _ = gdrive;
+    Err(BosuaError::Command("gdrive rename requires the Go binary at /opt/homebrew/bin/bosua".into()))
 }
 
 async fn handle_move(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> {
@@ -567,19 +614,80 @@ async fn handle_copy(matches: &ArgMatches, gdrive: &GDriveClient) -> Result<()> 
     Ok(())
 }
 
-async fn handle_import(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
-    output::info("gdrive import: not yet implemented in Rust backend");
-    Ok(())
+async fn handle_import(matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
+    let file_path = matches.get_one::<String>("file-path").unwrap();
+    let go_bin = "/opt/homebrew/bin/bosua";
+    if std::path::Path::new(go_bin).exists() {
+        let mut args = vec!["gdrive", "import", file_path.as_str()];
+        let parents: Vec<&String> = matches.get_many::<String>("parent").unwrap_or_default().collect();
+        let parent_strs: Vec<String> = parents.iter().map(|p| format!("--parent={}", p)).collect();
+        let parent_refs: Vec<&str> = parent_strs.iter().map(|s| s.as_str()).collect();
+        args.extend(parent_refs);
+
+        let status = tokio::process::Command::new(go_bin)
+            .args(&args)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await
+            .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+        if !status.success() {
+            return Err(BosuaError::Command("gdrive import failed".into()));
+        }
+        return Ok(());
+    }
+    Err(BosuaError::Command("gdrive import requires the Go binary".into()))
 }
 
-async fn handle_export(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
-    output::info("gdrive export: not yet implemented in Rust backend");
-    Ok(())
+async fn handle_export(matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
+    let file_id = matches.get_one::<String>("file-id").unwrap();
+    let file_path = matches.get_one::<String>("file-path").unwrap();
+    let go_bin = "/opt/homebrew/bin/bosua";
+    if std::path::Path::new(go_bin).exists() {
+        let status = tokio::process::Command::new(go_bin)
+            .args(["gdrive", "export", file_id, file_path])
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await
+            .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+        if !status.success() {
+            return Err(BosuaError::Command("gdrive export failed".into()));
+        }
+        return Ok(());
+    }
+    Err(BosuaError::Command("gdrive export requires the Go binary".into()))
 }
 
-async fn handle_generate_playlist(_matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
-    output::info("gdrive generate-playlist: not yet implemented in Rust backend");
-    Ok(())
+async fn handle_generate_playlist(matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<()> {
+    let go_bin = "/opt/homebrew/bin/bosua";
+    if std::path::Path::new(go_bin).exists() {
+        let mut args = vec!["gdrive".to_string(), "generate-playlist".to_string()];
+        if let Some(parent) = matches.get_one::<String>("parent") {
+            args.push(format!("--parent={}", parent));
+        }
+        if let Some(query) = matches.get_one::<String>("query") {
+            args.push(format!("--query={}", query));
+        }
+        if let Some(output_path) = matches.get_one::<String>("output") {
+            args.push(format!("--output={}", output_path));
+        }
+        let status = tokio::process::Command::new(go_bin)
+            .args(&args)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await
+            .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+        if !status.success() {
+            return Err(BosuaError::Command("gdrive generate-playlist failed".into()));
+        }
+        return Ok(());
+    }
+    Err(BosuaError::Command("gdrive generate-playlist requires the Go binary".into()))
 }
 
 /// GDrive config base path: `~/.config/gdrive3/`
@@ -707,26 +815,100 @@ async fn handle_account(matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<
         }
         Some(("remove", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            output::info(&format!("gdrive account remove {}: not yet implemented", name));
+            // Remove account directory from ~/.config/gdrive3/<name>
+            let account_dir = gdrive_base_path().join(name);
+            if !account_dir.exists() {
+                return Err(BosuaError::Command(format!(
+                    "Account '{}' not found at {}",
+                    name,
+                    account_dir.display()
+                )));
+            }
+            std::fs::remove_dir_all(&account_dir).map_err(|e| {
+                BosuaError::Command(format!("Failed to remove account directory: {}", e))
+            })?;
+            // If this was the current account, clear it
+            if let Some(current) = load_current_gdrive_account() {
+                if current == *name {
+                    let _ = save_current_gdrive_account("");
+                }
+            }
+            output::success(&format!("Removed account: {}", name));
             Ok(())
         }
         Some(("add", _)) => {
-            output::info("gdrive account add: not yet implemented");
-            Ok(())
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if std::path::Path::new(go_bin).exists() {
+                let status = tokio::process::Command::new(go_bin)
+                    .args(["gdrive", "account", "add"])
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                    .await
+                    .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+                if !status.success() {
+                    return Err(BosuaError::Command("gdrive account add failed".into()));
+                }
+                return Ok(());
+            }
+            Err(BosuaError::Command("gdrive account add requires the Go binary".into()))
         }
         Some(("import", sub)) => {
             let path = sub.get_one::<String>("archive_path").unwrap();
-            output::info(&format!("gdrive account import {}: not yet implemented", path));
-            Ok(())
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if std::path::Path::new(go_bin).exists() {
+                let status = tokio::process::Command::new(go_bin)
+                    .args(["gdrive", "account", "import", path])
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                    .await
+                    .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+                if !status.success() {
+                    return Err(BosuaError::Command("gdrive account import failed".into()));
+                }
+                return Ok(());
+            }
+            Err(BosuaError::Command("gdrive account import requires the Go binary".into()))
         }
         Some(("export", sub)) => {
             let name = sub.get_one::<String>("account_name").unwrap();
-            output::info(&format!("gdrive account export {}: not yet implemented", name));
-            Ok(())
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if std::path::Path::new(go_bin).exists() {
+                let status = tokio::process::Command::new(go_bin)
+                    .args(["gdrive", "account", "export", name])
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                    .await
+                    .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+                if !status.success() {
+                    return Err(BosuaError::Command("gdrive account export failed".into()));
+                }
+                return Ok(());
+            }
+            Err(BosuaError::Command("gdrive account export requires the Go binary".into()))
         }
         Some(("stats", _)) => {
-            output::info("gdrive account stats: not yet implemented");
-            Ok(())
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if std::path::Path::new(go_bin).exists() {
+                let status = tokio::process::Command::new(go_bin)
+                    .args(["gdrive", "account", "stats"])
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                    .await
+                    .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+                if !status.success() {
+                    return Err(BosuaError::Command("gdrive account stats failed".into()));
+                }
+                return Ok(());
+            }
+            Err(BosuaError::Command("gdrive account stats requires the Go binary".into()))
         }
         _ => {
             output::info("account: use a subcommand (add, list, current, info, switch, remove, import, export, stats)");
@@ -738,8 +920,7 @@ async fn handle_account(matches: &ArgMatches, _gdrive: &GDriveClient) -> Result<
 fn handle_drives(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("list", _)) => {
-            output::info("Shared drive listing is not yet implemented.");
-            Ok(())
+            super::delegate_to_go_sync(&["gdrive", "drives", "list"])
         }
         _ => {
             output::info("drives: use a subcommand (list)");
@@ -810,11 +991,8 @@ fn handle_proxy(matches: &ArgMatches) -> Result<()> {
         Some(("start", sub)) => {
             let host = sub.get_one::<String>("host").unwrap();
             let port = sub.get_one::<u16>("port").unwrap();
-            output::info(&format!(
-                "gdrive proxy start on {}:{}: not yet implemented",
-                host, port
-            ));
-            Ok(())
+            let port_str = port.to_string();
+            super::delegate_to_go_sync(&["gdrive", "proxy", "start", "--host", host, "--port", &port_str])
         }
         _ => {
             output::info("gdrive proxy: use a subcommand (start)");

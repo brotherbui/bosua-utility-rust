@@ -78,16 +78,44 @@ pub fn mac_meta() -> CommandMeta {
 pub async fn handle_mac(matches: &ArgMatches) -> crate::errors::Result<()> {
     match matches.subcommand() {
         Some(("download", sub)) => handle_download(sub).await,
-        Some(("hidemyemail", _)) => {
-            println!("hidemyemail: not yet implemented");
-            Ok(())
-        }
+        Some(("hidemyemail", sub)) => handle_hidemyemail(sub).await,
         Some(("ided", _)) => handle_ided().await,
         Some(("knownhosts", sub)) => handle_knownhosts(sub).await,
         Some(("notes", sub)) => handle_notes(sub).await,
         Some(("xcode", sub)) => handle_xcode(sub).await,
         _ => unreachable!("subcommand_required is set"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// hidemyemail handler — Generate iCloud Hide My Email address via AppleScript
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "macos")]
+async fn handle_hidemyemail(matches: &ArgMatches) -> crate::errors::Result<()> {
+    // Go passes trailing args as label; we delegate to Go binary which has
+    // the full AppleScript automation for System Settings
+    let go_bin = "/opt/homebrew/bin/bosua";
+    if !std::path::Path::new(go_bin).exists() {
+        return Err(crate::errors::BosuaError::Command(
+            "hidemyemail requires the Go binary at /opt/homebrew/bin/bosua (AppleScript automation not yet ported)".into(),
+        ));
+    }
+
+    let _ = matches;
+    let status = tokio::process::Command::new(go_bin)
+        .args(["mac", "hidemyemail"])
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .await
+        .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+
+    if !status.success() {
+        return Err(crate::errors::BosuaError::Command("hidemyemail failed".into()));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +162,40 @@ async fn handle_knownhosts(matches: &ArgMatches) -> crate::errors::Result<()> {
         }
         Some(("remove", sub)) => {
             let ips: Vec<&String> = sub.get_many::<String>("ips").unwrap().collect();
-            println!("Removing {} IPs from known_hosts", ips.len());
-            for ip in &ips {
-                println!("  Removed: {}", ip);
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            let path = format!("{}/.ssh/known_hosts", home);
+
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    let mut kept_lines = Vec::new();
+                    let mut removed = Vec::new();
+
+                    for line in content.lines() {
+                        let should_remove = ips.iter().any(|ip| line.contains(ip.as_str()));
+                        if should_remove {
+                            for ip in &ips {
+                                if line.contains(ip.as_str()) {
+                                    removed.push(ip.to_string());
+                                }
+                            }
+                        } else {
+                            kept_lines.push(line);
+                        }
+                    }
+
+                    let new_content = kept_lines.join("\n") + "\n";
+                    if let Err(e) = std::fs::write(&path, new_content) {
+                        println!("Failed to write known_hosts: {}", e);
+                    } else {
+                        removed.sort();
+                        removed.dedup();
+                        for ip in &removed {
+                            println!("  Removed: {}", ip);
+                        }
+                        println!("Removed {} IPs from known_hosts", removed.len());
+                    }
+                }
+                Err(e) => println!("Failed to read known_hosts: {}", e),
             }
             Ok(())
         }
@@ -152,8 +211,24 @@ async fn handle_knownhosts(matches: &ArgMatches) -> crate::errors::Result<()> {
 async fn handle_notes(matches: &ArgMatches) -> crate::errors::Result<()> {
     match matches.subcommand() {
         Some(("compare", _)) => {
-            println!("Comparing database vs AppleScript methods...");
-            println!("compare: not yet implemented");
+            // Delegate to Go binary which has full database + AppleScript comparison
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(crate::errors::BosuaError::Command(
+                    "notes compare requires the Go binary at /opt/homebrew/bin/bosua".into(),
+                ));
+            }
+            let status = tokio::process::Command::new(go_bin)
+                .args(["mac", "notes", "compare"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await
+                .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(crate::errors::BosuaError::Command("notes compare failed".into()));
+            }
             Ok(())
         }
         Some(("search", sub)) => {
@@ -177,8 +252,24 @@ end tell"#,
             Ok(())
         }
         Some(("sync", _)) => {
-            println!("Syncing notes...");
-            println!("sync: not yet implemented");
+            // Delegate to Go binary which has full database sync logic
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(crate::errors::BosuaError::Command(
+                    "notes sync requires the Go binary at /opt/homebrew/bin/bosua".into(),
+                ));
+            }
+            let status = tokio::process::Command::new(go_bin)
+                .args(["mac", "notes", "sync"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await
+                .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(crate::errors::BosuaError::Command("notes sync failed".into()));
+            }
             Ok(())
         }
         _ => unreachable!("subcommand_required is set"),
@@ -193,7 +284,24 @@ end tell"#,
 async fn handle_xcode(matches: &ArgMatches) -> crate::errors::Result<()> {
     match matches.subcommand() {
         Some(("archive", _)) => {
-            println!("xcode archive: not yet implemented");
+            // Delegate to Go binary which has xcodebuild integration
+            let go_bin = "/opt/homebrew/bin/bosua";
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(crate::errors::BosuaError::Command(
+                    "xcode archive requires the Go binary at /opt/homebrew/bin/bosua (xcodebuild integration not yet ported)".into(),
+                ));
+            }
+            let status = tokio::process::Command::new(go_bin)
+                .args(["mac", "xcode", "archive"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await
+                .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(crate::errors::BosuaError::Command("xcode archive failed".into()));
+            }
             Ok(())
         }
         _ => unreachable!("subcommand_required is set"),
@@ -206,17 +314,66 @@ async fn handle_xcode(matches: &ArgMatches) -> crate::errors::Result<()> {
 
 #[cfg(feature = "macos")]
 async fn handle_download(matches: &ArgMatches) -> crate::errors::Result<()> {
+    // All download subcommands delegate to Go binary which has full
+    // HTTP download + interactive selection + aria2 integration
+    let go_bin = "/opt/homebrew/bin/bosua";
+
     match matches.subcommand() {
         Some(("macos", _)) => {
-            println!("download macos: not yet implemented");
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(crate::errors::BosuaError::Command(
+                    "download macos requires the Go binary at /opt/homebrew/bin/bosua".into(),
+                ));
+            }
+            let status = tokio::process::Command::new(go_bin)
+                .args(["mac", "download", "macos"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await
+                .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(crate::errors::BosuaError::Command("download macos failed".into()));
+            }
             Ok(())
         }
         Some(("parallels", _)) => {
-            println!("download parallels: not yet implemented");
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(crate::errors::BosuaError::Command(
+                    "download parallels requires the Go binary at /opt/homebrew/bin/bosua".into(),
+                ));
+            }
+            let status = tokio::process::Command::new(go_bin)
+                .args(["mac", "download", "parallels"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await
+                .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(crate::errors::BosuaError::Command("download parallels failed".into()));
+            }
             Ok(())
         }
         Some(("xcode", _)) => {
-            println!("download xcode: not yet implemented");
+            if !std::path::Path::new(go_bin).exists() {
+                return Err(crate::errors::BosuaError::Command(
+                    "download xcode requires the Go binary at /opt/homebrew/bin/bosua".into(),
+                ));
+            }
+            let status = tokio::process::Command::new(go_bin)
+                .args(["mac", "download", "xcode"])
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await
+                .map_err(|e| crate::errors::BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+            if !status.success() {
+                return Err(crate::errors::BosuaError::Command("download xcode failed".into()));
+            }
             Ok(())
         }
         _ => {

@@ -203,8 +203,7 @@ async fn handle_account(matches: &ArgMatches) -> Result<()> {
             Ok(())
         }
         Some((name, _)) => {
-            println!("gcloud account {}: not yet implemented", name);
-            Ok(())
+            super::delegate_to_go(&["gcloud", "account", name]).await
         }
         _ => {
             println!("gcloud account: use a subcommand");

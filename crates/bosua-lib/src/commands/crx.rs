@@ -61,13 +61,31 @@ async fn handle_convert(matches: &ArgMatches) -> Result<()> {
     let remove = matches.get_flag("remove");
     let team = matches.get_one::<String>("team").unwrap();
 
-    println!("Converting extension (team: {})", team);
-    if archive { println!("  Will archive to application"); }
-    if install { println!("  Will install after export"); }
-    if remove { println!("  Will remove source after convert"); }
+    // Go passes trailing args as file paths to convert
+    // In Rust CLI we don't have trailing args, so delegate to Go binary
+    let go_bin = "/opt/homebrew/bin/bosua";
+    if !std::path::Path::new(go_bin).exists() {
+        return Err(BosuaError::Command(
+            "CRX convert requires the Go binary at /opt/homebrew/bin/bosua (xcrun/xcodebuild integration not yet ported)".into(),
+        ));
+    }
 
-    // TODO: implement CRX to Xcode project conversion
-    println!("crx convert: not yet implemented");
+    let mut args = vec!["crx".to_string(), "convert".to_string()];
+    args.push(format!("--team={}", team));
+    if archive { args.push("--archive".to_string()); }
+    if install { args.push("--install".to_string()); }
+    if remove { args.push("--remove".to_string()); }
+
+    let output = tokio::process::Command::new(go_bin)
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.is_empty() { print!("{}", stdout); }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() { eprint!("{}", stderr); }
     Ok(())
 }
 
@@ -76,14 +94,33 @@ async fn handle_download(matches: &ArgMatches, http: &HttpClient) -> Result<()> 
     let convert = matches.get_flag("convert");
     let archive = matches.get_flag("archive");
     let install = matches.get_flag("install");
-    let _team = matches.get_one::<String>("team").unwrap();
+    let team = matches.get_one::<String>("team").unwrap();
 
-    // TODO: prompt for extension ID or accept as arg
-    println!("crx download: not yet fully implemented");
-    if extract { println!("  Will extract after download"); }
-    if convert { println!("  Will convert after extract"); }
-    if archive { println!("  Will archive to application"); }
-    if install { println!("  Will install after export"); }
+    // Delegate to Go binary which has full CRX download/extract/convert pipeline
+    let go_bin = "/opt/homebrew/bin/bosua";
+    if !std::path::Path::new(go_bin).exists() {
+        return Err(BosuaError::Command(
+            "CRX download requires the Go binary at /opt/homebrew/bin/bosua".into(),
+        ));
+    }
+
+    let mut args = vec!["crx".to_string(), "download".to_string()];
+    args.push(format!("--team={}", team));
+    if extract { args.push("--extract".to_string()); }
+    if convert { args.push("--convert".to_string()); }
+    if archive { args.push("--archive".to_string()); }
+    if install { args.push("--install".to_string()); }
+
+    let output = tokio::process::Command::new(go_bin)
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| BosuaError::Command(format!("Failed to run Go binary: {}", e)))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.is_empty() { print!("{}", stdout); }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() { eprint!("{}", stderr); }
 
     let _ = http;
     Ok(())

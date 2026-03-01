@@ -35,24 +35,20 @@ pub fn proxy_meta() -> CommandMeta {
 
 /// Handle the `proxy` command.
 pub async fn handle_proxy(matches: &ArgMatches) -> Result<()> {
-    let _config = matches.get_one::<String>("config");
+    let config = matches.get_one::<String>("config");
 
-    match matches.subcommand() {
-        Some(("check", sub)) => {
-            let one = sub.get_flag("one");
-            println!("proxy check (one_by_one={}): not yet implemented", one);
-            Ok(())
-        }
-        Some(("create-config", _)) => { println!("proxy create-config: not yet implemented"); Ok(()) }
-        Some(("get", _)) => { println!("proxy get: not yet implemented"); Ok(()) }
-        Some(("off", _)) => { println!("proxy off: not yet implemented"); Ok(()) }
-        Some(("on", _)) => { println!("proxy on: not yet implemented"); Ok(()) }
-        Some(("shell", _)) => { println!("proxy shell: not yet implemented"); Ok(()) }
-        Some(("status", _)) => { println!("proxy status: not yet implemented"); Ok(()) }
-        Some(("test", _)) => { println!("proxy test: not yet implemented"); Ok(()) }
-        Some(("with-proxy", _)) => { println!("proxy with-proxy: not yet implemented"); Ok(()) }
-        _ => unreachable!("subcommand_required is set"),
+    let (sub_name, sub_matches) = matches.subcommand().expect("subcommand_required is set");
+    let mut args = vec!["proxy"];
+    if let Some(c) = config {
+        args.push("--config");
+        args.push(c);
     }
+    args.push(sub_name);
+    // Forward --one flag for check
+    if sub_name == "check" && sub_matches.get_flag("one") {
+        args.push("--one");
+    }
+    super::delegate_to_go(&args).await
 }
 
 #[cfg(test)]

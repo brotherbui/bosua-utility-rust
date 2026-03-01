@@ -60,8 +60,7 @@ pub async fn handle_bitcoin(matches: &ArgMatches, http: &HttpClient) -> Result<(
             Ok(())
         }
         Some(("signet", _)) => {
-            println!("bitcoin signet: not yet implemented");
-            Ok(())
+            super::delegate_to_go(&["bitcoin", "signet"]).await
         }
         _ => unreachable!("subcommand_required is set"),
     }
