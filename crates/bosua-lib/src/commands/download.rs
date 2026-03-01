@@ -152,16 +152,13 @@ async fn resolve_and_download(
     dl: &DownloadManager,
     token: &tokio_util::sync::CancellationToken,
 ) -> Result<bool> {
-    let download_url = if url.contains("fshare.vn") {
-        // Resolve FShare VIP link
+    // FShare links: use aria2 with 25% VIP link renewal trick
+    if url.contains("fshare.vn") && !url.contains("folder") {
         if let Some(fs) = fshare {
-            match fs.resolve_vip_link(url).await {
-                Ok(vip_url) => {
-                    output::success(&format!("{} -> {}", url, vip_url));
-                    vip_url
-                }
+            match dl.do_fshare_download(url, fs, token, false, 0).await {
+                Ok(_result) => return Ok(true),
                 Err(e) => {
-                    output::error(&format!("{} -> VIP resolve failed: {}", url, e));
+                    output::error(&format!("{} -> download failed: {}", url, e));
                     return Ok(false);
                 }
             }
@@ -172,12 +169,11 @@ async fn resolve_and_download(
             ));
             return Ok(false);
         }
-    } else {
-        url.to_string()
-    };
+    }
 
+    // Direct URLs: simple HTTP download
     let results = dl
-        .download_urls_with_context(token.clone(), &[download_url], false, 0)
+        .download_urls_with_context(token.clone(), &[url.to_string()], false, 0)
         .await?;
 
     Ok(!results.is_empty())
