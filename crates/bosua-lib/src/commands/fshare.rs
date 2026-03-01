@@ -115,6 +115,7 @@ fn token_subcommand() -> Command {
     Command::new("token")
         .aliases(["tk"])
         .about("Fshare token stuffs")
+        .allow_external_subcommands(true)
         .subcommand(
             Command::new("view")
                 .aliases(["v", "g", "i"])
@@ -170,6 +171,27 @@ fn shorten_subcommand() -> Command {
                 .required(true)
                 .help("Shortened URLs to resolve"),
         )
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Normalize an FShare code/URL to a full FShare URL.
+/// Matches Go's `fshare.NormalizeLink()`.
+fn normalize_fshare_link(input: &str) -> String {
+    let input = input.trim();
+    if input.is_empty() {
+        return String::new();
+    }
+    if input.contains("fshare.vn") || input.contains("http") {
+        return input.to_string();
+    }
+    if input.len() >= 10 {
+        return format!("https://www.fshare.vn/file/{}", input);
+    }
+    // Short code — return as-is
+    input.to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -310,8 +332,8 @@ async fn handle_token(matches: &ArgMatches, fshare: &FShareClient) -> Result<()>
             match fshare.get_token().await {
                 Some(token) => {
                     let session_id = fshare.get_session_id().await.unwrap_or_default();
-                    output::info(&format!("Token: {}", mask_token(&token)));
-                    output::info(&format!("Session ID: {}", mask_token(&session_id)));
+                    // Match Go's output: print full token and session ID
+                    println!("Token: {} \nSessionID: {}", token, session_id);
                 }
                 None => {
                     output::info("No token set.");
@@ -353,7 +375,7 @@ async fn handle_get(
         .cloned()
         .collect();
 
-    // Expand .txt files into individual links
+    // Expand .txt files and flatten comma-separated links
     let mut links = Vec::new();
     for input in &inputs {
         if input.ends_with(".txt") {
@@ -371,7 +393,13 @@ async fn handle_get(
                 }
             }
         } else {
-            links.push(input.clone());
+            // Support comma-separated links like Go's FlattenArgs
+            for part in input.split(',') {
+                let part = part.trim();
+                if !part.is_empty() {
+                    links.push(part.to_string());
+                }
+            }
         }
     }
 
@@ -380,24 +408,22 @@ async fn handle_get(
         return Ok(());
     }
 
-    // Resolve VIP links
-    let results = fshare.resolve_vip_links(&links).await;
+    // Resolve VIP links one by one (matches Go's ProcessLinksWithContext with isGet=true)
     let mut count = 0;
-    for (original, result) in &results {
-        match result {
+    for link in &links {
+        let normalized = normalize_fshare_link(link);
+        if normalized.is_empty() {
+            continue;
+        }
+        match fshare.resolve_vip_link(&normalized).await {
             Ok(vip_link) => {
-                output::success(vip_link);
+                output::success(&vip_link);
                 count += 1;
             }
             Err(e) => {
-                output::error(&format!("{} -> Error: {}", original, e));
+                output::error(&format!("{} -> Error: {}", link, e));
             }
         }
-    }
-
-    // If we have a download manager, download the resolved links
-    if let Some(_dm) = dl {
-        // Download integration handled by the download manager
     }
 
     println!("================{} link(s) processed================", count);
