@@ -58,6 +58,54 @@ fn bosua_home() -> PathBuf {
     home.join(".bosua")
 }
 
+/// GDrive config base path: `~/.config/gdrive3/` (shared with Go binary).
+fn gdrive3_base() -> PathBuf {
+    let home = std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp"));
+    home.join(".config").join("gdrive3")
+}
+
+/// Resolve the current GDrive account's token file and OAuth2 credentials.
+///
+/// Reads `~/.config/gdrive3/account.json` to find the current account,
+/// then loads `tokens.json` and `secret.json` from the account directory.
+/// Falls back to `~/.bosua/gdrive-token.json` if no account is configured.
+fn resolve_gdrive_account(gdrive_base: &PathBuf) -> (PathBuf, String, String) {
+    let account_config = gdrive_base.join("account.json");
+    if let Ok(data) = std::fs::read_to_string(&account_config) {
+        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Some(current) = config.get("current").and_then(|v| v.as_str()) {
+                if !current.is_empty() {
+                    let account_dir = gdrive_base.join(current);
+                    let token_file = account_dir.join("tokens.json");
+
+                    // Load client_id/client_secret from secret.json
+                    let (client_id, client_secret) = load_gdrive_secret(&account_dir);
+
+                    return (token_file, client_id, client_secret);
+                }
+            }
+        }
+    }
+
+    // Fallback: no account configured
+    (bosua_home().join("gdrive-token.json"), String::new(), String::new())
+}
+
+/// Load OAuth2 client credentials from `<account_dir>/secret.json`.
+fn load_gdrive_secret(account_dir: &PathBuf) -> (String, String) {
+    let secret_path = account_dir.join("secret.json");
+    if let Ok(data) = std::fs::read_to_string(&secret_path) {
+        if let Ok(secret) = serde_json::from_str::<serde_json::Value>(&data) {
+            let id = secret.get("client_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let sec = secret.get("client_secret").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            return (id, sec);
+        }
+    }
+    (String::new(), String::new())
+}
+
 impl ServiceRegistry {
     /// Create a new `ServiceRegistry`. No clients are initialized yet.
     pub fn new(config_manager: Arc<DynamicConfigManager>, http_client: HttpClient) -> Self {
@@ -110,14 +158,21 @@ impl ServiceRegistry {
             .get_or_try_init(|| async {
                 let config = self.config_manager.get_config().await;
                 let base = bosua_home();
+
+                // Resolve current account from ~/.config/gdrive3/account.json
+                // to share credentials with the Go binary.
+                let gdrive_base = gdrive3_base();
+                let (token_file, client_id, client_secret) =
+                    resolve_gdrive_account(&gdrive_base);
+
                 let client = Arc::new(GDriveClient::new(
                     self.http_client.clone(),
-                    base.join("gdrive-token.json"),
+                    token_file,
                     base.join("gdrive.lock"),
                     base.join("gdrive-retry.lock"),
                     &config,
-                    String::new(), // client_id — empty until configured
-                    String::new(), // client_secret — empty until configured
+                    client_id,
+                    client_secret,
                 ));
 
                 // Wire config change notification → GDriveClient default account.

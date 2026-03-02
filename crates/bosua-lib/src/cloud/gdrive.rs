@@ -83,8 +83,13 @@ pub struct GDrivePermission {
 pub struct GDriveToken {
     pub access_token: String,
     pub refresh_token: Option<String>,
+    #[serde(default = "default_token_type")]
     pub token_type: String,
     pub expiry: Option<String>,
+}
+
+fn default_token_type() -> String {
+    "Bearer".to_string()
 }
 
 /// Entry shown during interactive browse.
@@ -243,7 +248,10 @@ impl GDriveClient {
                 .refresh_token()
                 .map(|t| t.secret().clone()),
             token_type: "Bearer".to_string(),
-            expiry: None,
+            expiry: token_result.expires_in().map(|d| {
+                let expiry = chrono::Utc::now() + chrono::Duration::seconds(d.as_secs() as i64);
+                expiry.to_rfc3339()
+            }),
         };
 
         self.save_token(&gdrive_token).await?;
@@ -283,7 +291,10 @@ impl GDriveClient {
                 .map(|t| t.secret().clone())
                 .or(old_refresh),
             token_type: "Bearer".to_string(),
-            expiry: None,
+            expiry: token_result.expires_in().map(|d| {
+                let expiry = chrono::Utc::now() + chrono::Duration::seconds(d.as_secs() as i64);
+                expiry.to_rfc3339()
+            }),
         };
 
         self.save_token(&gdrive_token).await?;
@@ -312,20 +323,55 @@ impl GDriveClient {
         Ok(())
     }
 
-    /// Get a valid access token, refreshing if necessary.
+    /// Get a valid access token, refreshing if expired.
     async fn access_token(&self) -> Result<String> {
-        let guard = self.token.read().await;
-        match &*guard {
-            Some(t) => Ok(t.access_token.clone()),
-            None => {
-                drop(guard);
-                if let Some(t) = self.load_token().await? {
-                    return Ok(t.access_token);
+        // Try in-memory token first
+        {
+            let guard = self.token.read().await;
+            if let Some(t) = &*guard {
+                if !Self::is_token_expired(t) {
+                    return Ok(t.access_token.clone());
                 }
-                Err(BosuaError::Auth(
-                    "Not authenticated. Run the OAuth2 flow first.".into(),
-                ))
             }
+        }
+
+        // Try loading from disk
+        if let Some(t) = self.load_token().await? {
+            if !Self::is_token_expired(&t) {
+                return Ok(t.access_token);
+            }
+            // Token exists but expired — try refresh
+            if t.refresh_token.is_some() {
+                tracing::info!("Access token expired, refreshing...");
+                match self.refresh_token().await {
+                    Ok(refreshed) => return Ok(refreshed.access_token),
+                    Err(e) => {
+                        tracing::warn!("Token refresh failed: {e}");
+                        // Fall through to error
+                    }
+                }
+            }
+        }
+
+        Err(BosuaError::Auth(
+            "Not authenticated. Run the OAuth2 flow first.".into(),
+        ))
+    }
+
+    /// Check if a token is expired (with 60s buffer).
+    fn is_token_expired(token: &GDriveToken) -> bool {
+        match &token.expiry {
+            Some(expiry_str) => {
+                // Parse RFC3339: "2026-03-01T13:38:17Z"
+                match chrono::DateTime::parse_from_rfc3339(expiry_str) {
+                    Ok(expiry) => {
+                        let now = chrono::Utc::now();
+                        expiry < now + chrono::Duration::seconds(60)
+                    }
+                    Err(_) => false, // Can't parse → assume valid
+                }
+            }
+            None => false, // No expiry → assume valid
         }
     }
 
