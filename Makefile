@@ -1,4 +1,4 @@
-DIST_DIR := dist/rust
+DIST_DIR := dist
 DOCKER_IMAGE := bosua-rust
 DOCKER_TAG := latest
 
@@ -30,8 +30,8 @@ release:
 	@echo "🏭️  Building macOS release binary..."
 	cargo build --release -p bosua-macos
 	@mkdir -p $(DIST_DIR)
-	cp target/release/bosua-macos $(DIST_DIR)/bosua-macos
-	du -sh $(DIST_DIR)/bosua-macos
+	cp target/release/bosua-macos $(DIST_DIR)/bosua
+	du -sh $(DIST_DIR)/bosua
 
 universal:
 	@echo "🏭️  Building macOS universal binary..."
@@ -41,7 +41,7 @@ universal:
 	lipo -create -output $(DIST_DIR)/bosua-macos-universal \
 		target/x86_64-apple-darwin/release/bosua-macos \
 		target/aarch64-apple-darwin/release/bosua-macos
-	du -sh $(DIST_DIR)/bosua-macos-universal
+	du -sh $(DIST_DIR)/bosua-universal
 
 linux:
 	@echo "🏭️  Building Linux x86_64 binary..."
