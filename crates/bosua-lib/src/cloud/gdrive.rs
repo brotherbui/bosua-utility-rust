@@ -176,8 +176,24 @@ impl GDriveClient {
     // OAuth2 helpers
     // -----------------------------------------------------------------------
 
-    /// Build the `oauth2::BasicClient` for Google Drive.
-    fn oauth2_client(&self) -> Result<BasicClient> {
+    /// Build a fully-configured OAuth2 client for Google Drive.
+    /// Returns the concrete type with all endpoints set (auth, token, redirect).
+    fn build_oauth2_client(
+        &self,
+    ) -> Result<
+        oauth2::Client<
+            oauth2::StandardErrorResponse<oauth2::basic::BasicErrorResponseType>,
+            oauth2::StandardTokenResponse<oauth2::EmptyExtraTokenFields, oauth2::basic::BasicTokenType>,
+            oauth2::StandardTokenIntrospectionResponse<oauth2::EmptyExtraTokenFields, oauth2::basic::BasicTokenType>,
+            oauth2::StandardRevocableToken,
+            oauth2::StandardErrorResponse<oauth2::RevocationErrorResponseType>,
+            oauth2::EndpointSet,
+            oauth2::EndpointNotSet,
+            oauth2::EndpointNotSet,
+            oauth2::EndpointNotSet,
+            oauth2::EndpointSet,
+        >,
+    > {
         let auth_url = AuthUrl::new(GOOGLE_AUTH_URL.to_string())
             .map_err(|e| BosuaError::OAuth2(format!("Invalid auth URL: {e}")))?;
         let token_url = TokenUrl::new(GOOGLE_TOKEN_URL.to_string())
@@ -185,20 +201,18 @@ impl GDriveClient {
         let redirect_url = RedirectUrl::new(self.redirect_uri.clone())
             .map_err(|e| BosuaError::OAuth2(format!("Invalid redirect URI: {e}")))?;
 
-        let client = BasicClient::new(
-            ClientId::new(self.client_id.clone()),
-            Some(ClientSecret::new(self.client_secret.clone())),
-            auth_url,
-            Some(token_url),
-        )
-        .set_redirect_uri(redirect_url);
+        let client = BasicClient::new(ClientId::new(self.client_id.clone()))
+            .set_client_secret(ClientSecret::new(self.client_secret.clone()))
+            .set_auth_uri(auth_url)
+            .set_token_uri(token_url)
+            .set_redirect_uri(redirect_url);
 
         Ok(client)
     }
 
     /// Generate the authorization URL the user should visit.
     pub fn authorization_url(&self) -> Result<(String, CsrfToken)> {
-        let client = self.oauth2_client()?;
+        let client = self.build_oauth2_client()?;
         let (url, csrf) = client
             .authorize_url(CsrfToken::new_random)
             .add_scope(Scope::new(
@@ -210,11 +224,16 @@ impl GDriveClient {
 
     /// Exchange an authorization code for tokens and persist them.
     pub async fn exchange_code(&self, code: &str) -> Result<GDriveToken> {
-        let client = self.oauth2_client()?;
+        let client = self.build_oauth2_client()?;
+
+        let http_client = oauth2::reqwest::ClientBuilder::new()
+            .redirect(oauth2::reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| BosuaError::OAuth2(format!("Failed to build HTTP client: {e}")))?;
 
         let token_result = client
             .exchange_code(AuthorizationCode::new(code.to_string()))
-            .request_async(oauth2::reqwest::async_http_client)
+            .request_async(&http_client)
             .await
             .map_err(|e| BosuaError::OAuth2(format!("Token exchange failed: {e}")))?;
 
@@ -244,11 +263,16 @@ impl GDriveClient {
             .and_then(|t| t.refresh_token.clone());
         drop(current);
 
-        let client = self.oauth2_client()?;
+        let client = self.build_oauth2_client()?;
+
+        let http_client = oauth2::reqwest::ClientBuilder::new()
+            .redirect(oauth2::reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| BosuaError::OAuth2(format!("Failed to build HTTP client: {e}")))?;
 
         let token_result = client
             .exchange_refresh_token(&RefreshToken::new(refresh))
-            .request_async(oauth2::reqwest::async_http_client)
+            .request_async(&http_client)
             .await
             .map_err(|e| BosuaError::OAuth2(format!("Token refresh failed: {e}")))?;
 
